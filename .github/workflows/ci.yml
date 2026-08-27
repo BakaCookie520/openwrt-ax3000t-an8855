@@ -277,6 +277,7 @@ jobs:
       - name: Build firmware
         run: |
           cd "$OPENWRT_DIR"
+          set -o pipefail
           make -j$(nproc) V=s 2>&1 | tee build.log
 
       - name: Validate image size
@@ -287,14 +288,20 @@ jobs:
       - name: Build OpenClash APK
         run: |
           cd "$OPENWRT_DIR"
-          make package/feeds/openclash/luci-app-openclash/compile V=s 2>&1 | tee -a build.log
-          APK_GLOB="$OPENWRT_DIR/bin/packages/aarch64_cortex-a53/openclash/luci-app-openclash-*.apk"
-          if ! ls $APK_GLOB >/dev/null 2>&1; then
+          set -o pipefail
+          make package/feeds/openclash/luci-app-openclash/compile \
+            V=s DEVELOPER=1 2>&1 | tee -a build.log
+          OPENCLASH_PACKAGE_DIR="$OPENWRT_DIR/bin/packages/aarch64_cortex-a53/openclash"
+          mapfile -t OPENCLASH_APKS < <(
+            find "$OPENCLASH_PACKAGE_DIR" -maxdepth 1 -type f \
+              -name 'luci-app-openclash-*.apk' -print
+          )
+          if [ "${#OPENCLASH_APKS[@]}" -eq 0 ]; then
             echo "❌ OpenClash APK not generated"
             exit 1
           fi
           echo "✅ OpenClash APK generated:"
-          ls -lh $APK_GLOB
+          ls -lh -- "${OPENCLASH_APKS[@]}"
 
       - name: Collect artifacts
         run: |
@@ -305,7 +312,14 @@ jobs:
           cp "$TARGET_DIR"/*-initramfs-factory.ubi "$ARTIFACT_DIR"/ 2>/dev/null || true
           cp "$TARGET_DIR"/*-squashfs-sysupgrade.bin "$ARTIFACT_DIR"/ 2>/dev/null || true
           # OpenClash APK
-          cp "$OPENWRT_DIR/bin/packages/aarch64_cortex-a53/openclash/luci-app-openclash-*.apk" "$ARTIFACT_DIR"/ 2>/dev/null || true
+          OPENCLASH_PACKAGE_DIR="$OPENWRT_DIR/bin/packages/aarch64_cortex-a53/openclash"
+          mapfile -t OPENCLASH_APKS < <(
+            find "$OPENCLASH_PACKAGE_DIR" -maxdepth 1 -type f \
+              -name 'luci-app-openclash-*.apk' -print
+          )
+          if [ "${#OPENCLASH_APKS[@]}" -gt 0 ]; then
+            cp -- "${OPENCLASH_APKS[@]}" "$ARTIFACT_DIR"/
+          fi
           # SHA256 sums
           (cd "$ARTIFACT_DIR" && sha256sum * > SHA256SUMS.txt 2>/dev/null || true)
           echo "ARTIFACT_DIR=$ARTIFACT_DIR" >> $GITHUB_ENV
