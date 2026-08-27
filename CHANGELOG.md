@@ -1,3 +1,10 @@
+## [1.0.1](https://github.com/BakaCookie520/openwrt-ax3000t-an8855/compare/v1.0.0...v1.0.1) (2026-08-27)
+
+
+### Bug Fixes
+
+* **ci:** force standalone OpenClash APK build ([ba14b80](https://github.com/BakaCookie520/openwrt-ax3000t-an8855/commit/ba14b8098ad85efe01044f6d6aa7bc3b98650e91))
+
 # 1.0.0 (2026-08-26)
 
 
