@@ -6,13 +6,15 @@
 
 set -euo pipefail
 
-cat > .config.seed <<'CONFIG_EOF'
+VERSION_REPO="${OPENWRT_VERSION_REPO:-https://mirrors.ustc.edu.cn/openwrt/snapshots}"
+
+cat > .config.seed <<CONFIG_EOF
 CONFIG_TARGET_mediatek=y
 CONFIG_TARGET_mediatek_filogic=y
 CONFIG_TARGET_mediatek_filogic_DEVICE_xiaomi_mi-router-ax3000t-an8855=y
 
 CONFIG_VERSIONOPT=y
-CONFIG_VERSION_REPO="https://mirrors.ustc.edu.cn/openwrt/snapshots"
+CONFIG_VERSION_REPO="${VERSION_REPO}"
 
 CONFIG_PACKAGE_luci=y
 CONFIG_PACKAGE_luci-ssl=y

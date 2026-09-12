@@ -7,16 +7,7 @@ on:
     branches: [master, openwrt-24.10]
   schedule:
     - cron: '0 2 1 * *'  # 02:00 UTC on the 1st of each month
-  workflow_dispatch:
-    inputs:
-      branch:
-        description: 'Branch to build (master or openwrt-24.10)'
-        required: false
-        default: 'master'
-        type: choice
-        options:
-          - master
-          - openwrt-24.10
+  workflow_dispatch: {}
 
 env:
   OPENWRT_DIR: ${{ github.workspace }}/openwrt-ax3000t
@@ -26,7 +17,7 @@ env:
 
 jobs:
   build:
-    name: Build (${{ matrix.branch }})
+    name: Build (${{ matrix.build_id }})
     runs-on: ubuntu-latest
     timeout-minutes: 180
     permissions:
@@ -35,12 +26,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - branch: master
+          - build_id: master
+            source_ref: master
             verified_commit_lock: true
+            apply_an8855_patches: true
             artifact_prefix: master
-          - branch: openwrt-24.10
+          - build_id: openwrt-24.10
+            source_ref: openwrt-24.10
             verified_commit_lock: false
+            apply_an8855_patches: false
             artifact_prefix: openwrt-24.10
+          - build_id: stable-latest
+            source_ref: latest-stable
+            verified_commit_lock: false
+            apply_an8855_patches: true
+            artifact_prefix: stable-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -48,27 +48,41 @@ jobs:
           fetch-depth: 0  # Needed for semantic-release and VERIFIED_COMMIT update
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up build branch
-        if: github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
+      - name: Set up OpenWrt source reference
         run: |
-          # For push, use the triggering branch; for pull_request, use the
-          # target (base) branch — github.ref_name is '<pr>/merge' on PRs and
-          # is not a valid upstream OpenWrt branch.
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "BUILD_BRANCH=${{ github.base_ref }}" >> $GITHUB_ENV
-          else
-            echo "BUILD_BRANCH=${{ github.ref_name }}" >> $GITHUB_ENV
-          fi
+          echo "BUILD_REF=${{ matrix.source_ref }}" >> "$GITHUB_ENV"
 
-      - name: Set up build branch (scheduled/dispatch)
-        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+      - name: Resolve latest stable OpenWrt release
+        if: ${{ matrix.build_id == 'stable-latest' }}
         run: |
-          # For scheduled/dispatch, use matrix or input
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "BUILD_BRANCH=${{ github.event.inputs.branch }}" >> $GITHUB_ENV
-          else
-            echo "BUILD_BRANCH=${{ matrix.branch }}" >> $GITHUB_ENV
+          set -euo pipefail
+          latest_tag="$(
+            curl --fail --silent --show-error --retry 3 \
+              -H 'Accept: application/vnd.github+json' \
+              'https://api.github.com/repos/openwrt/openwrt/releases?per_page=100' |
+              jq -r '
+                map(select(
+                  .draft == false and
+                  .prerelease == false and
+                  (.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))
+                ))
+                | max_by(
+                    .tag_name
+                    | capture("^v(?<major>[0-9]+)\\.(?<minor>[0-9]+)\\.(?<patch>[0-9]+)$")
+                    | [.major, .minor, .patch]
+                    | map(tonumber)
+                  )
+                | .tag_name
+              '
+          )"
+          if [ -z "$latest_tag" ] || [ "$latest_tag" = "null" ]; then
+            echo "❌ Failed to resolve the latest stable OpenWrt release"
+            exit 1
           fi
+          version="${latest_tag#v}"
+          echo "BUILD_REF=$latest_tag" >> "$GITHUB_ENV"
+          echo "OPENWRT_VERSION_REPO=https://mirrors.ustc.edu.cn/openwrt/releases/$version" >> "$GITHUB_ENV"
+          echo "Resolved latest stable OpenWrt release: $latest_tag"
 
       - name: Install dependencies
         run: |
@@ -88,13 +102,13 @@ jobs:
       - name: Clone OpenWrt
         run: |
           if [ ! -d "$OPENWRT_DIR" ]; then
-            git clone --depth 1 --branch "$BUILD_BRANCH" --single-branch \
+            git clone --depth 1 --branch "$BUILD_REF" --single-branch \
               https://git.openwrt.org/openwrt/openwrt.git "$OPENWRT_DIR"
           fi
           cd "$OPENWRT_DIR"
 
-      - name: Lock to VERIFIED_COMMIT (master only)
-        if: ${{ matrix.verified_commit_lock && github.event_name != 'pull_request' }}
+      - name: Lock to VERIFIED_COMMIT
+        if: ${{ matrix.verified_commit_lock }}
         run: |
           cd "$OPENWRT_DIR"
           if [ -f "$REPO_PATCH_DIR/VERIFIED_COMMIT" ]; then
@@ -110,8 +124,8 @@ jobs:
             echo "⚠️ VERIFIED_COMMIT file missing, following main latest"
           fi
 
-      - name: Apply an8855 patches (master only)
-        if: ${{ matrix.verified_commit_lock }}
+      - name: Apply an8855 patches
+        if: ${{ matrix.apply_an8855_patches }}
         run: |
           cd "$OPENWRT_DIR"
           if grep -q "Device/xiaomi_mi-router-ax3000t-an8855" target/linux/mediatek/image/filogic.mk; then

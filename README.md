@@ -19,14 +19,18 @@ verify the exact hardware before proceeding.
 
 ## Supported builds
 
-| Build | Source branch | Target handling |
+| Build | Source branch/release | Target handling |
 | --- | --- | --- |
 | Mainline snapshot | `master` | Applies the repository AN8855 patch set and locks to `patches/VERIFIED_COMMIT`. |
-| OpenWrt 24.10 | `openwrt-24.10` | Uses the upstream AN8855 target without the repository patch set. |
+| OpenWrt 24.10 snapshot | `openwrt-24.10` | Uses the upstream AN8855 target without the repository patch set. |
+| Latest stable release | `stable-latest` | Resolves the highest non-prerelease OpenWrt release tag at build time and applies the repository AN8855 patch set. |
 
 The build includes Tailscale, LuCI, `luci-compat`, networking and diagnostic
 packages, WireGuard, QoS modules, zram, and a curated filesystem/module set.
 OpenClash is built separately as an APK.
+
+GitHub Actions builds all three variants in parallel. The stable variant is
+resolved dynamically and is therefore not pinned to a specific release tag.
 
 ## Quick start
 
