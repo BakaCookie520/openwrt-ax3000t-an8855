@@ -29,8 +29,9 @@ The build includes Tailscale, LuCI, `luci-compat`, networking and diagnostic
 packages, WireGuard, QoS modules, zram, and a curated filesystem/module set.
 OpenClash is built separately as an APK.
 
-GitHub Actions builds all three variants in parallel. The stable variant is
-resolved dynamically and is therefore not pinned to a specific release tag.
+GitHub Actions builds the two snapshot variants in parallel. The stable
+variant runs in a separate workflow, is resolved dynamically, and is therefore
+not pinned to a specific release tag.
 
 ## Quick start
 
@@ -138,9 +139,11 @@ docs/                            Stable development and operations reference
 
 ## GitHub Actions
 
-The CI workflow builds both supported branches, checks the initramfs size,
-compiles OpenClash, and uploads firmware/APK artifacts. Build artifacts are
-retained by GitHub Actions for 90 days.
+The CI workflow builds the `master` and `openwrt-24.10` snapshot variants,
+checks the initramfs size, compiles OpenClash, and uploads firmware/APK
+artifacts. The separate `stable-latest.yml` workflow performs the same build
+for the latest stable OpenWrt release. Both workflows cache OpenWrt downloads
+and compiler results; artifacts are retained by GitHub Actions for 90 days.
 
 After a successful `master` firmware build, semantic-release determines the
 version from conventional commits, generates the changelog, creates a tag, and

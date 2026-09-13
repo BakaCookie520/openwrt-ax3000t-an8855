@@ -1,10 +1,6 @@
-name: CI - Build OpenWrt AX3000T-AN8855
+name: Stable OpenWrt Build - AX3000T-AN8855
 
 on:
-  push:
-    branches: [master, openwrt-24.10]
-  pull_request:
-    branches: [master, openwrt-24.10]
   schedule:
     - cron: '0 2 1 * *'  # 02:00 UTC on the 1st of each month
   workflow_dispatch: {}
@@ -18,35 +14,50 @@ env:
 
 jobs:
   build:
-    name: Build (${{ matrix.build_id }})
+    name: Build (stable-latest)
     runs-on: ubuntu-latest
     timeout-minutes: 360
     permissions:
-      contents: write  # Required for VERIFIED_COMMIT auto-update push
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - build_id: master
-            source_ref: master
-            verified_commit_lock: true
-            apply_an8855_patches: true
-            artifact_prefix: master
-          - build_id: openwrt-24.10
-            source_ref: openwrt-24.10
-            verified_commit_lock: false
-            apply_an8855_patches: false
-            artifact_prefix: openwrt-24.10
+      contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Needed for semantic-release and VERIFIED_COMMIT update
+          fetch-depth: 1
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up OpenWrt source reference
+      - name: Resolve latest stable OpenWrt release
+        id: resolve-stable
         run: |
-          echo "BUILD_REF=${{ matrix.source_ref }}" >> "$GITHUB_ENV"
+          set -euo pipefail
+          latest_tag="$(
+            curl --fail --silent --show-error --retry 3 \
+              -H 'Accept: application/vnd.github+json' \
+              'https://api.github.com/repos/openwrt/openwrt/releases?per_page=100' |
+              jq -r '
+                map(select(
+                  .draft == false and
+                  .prerelease == false and
+                  (.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))
+                ))
+                | max_by(
+                    .tag_name
+                    | capture("^v(?<major>[0-9]+)\\.(?<minor>[0-9]+)\\.(?<patch>[0-9]+)$")
+                    | [.major, .minor, .patch]
+                    | map(tonumber)
+                  )
+                | .tag_name
+              '
+          )"
+          if [ -z "$latest_tag" ] || [ "$latest_tag" = "null" ]; then
+            echo "❌ Failed to resolve the latest stable OpenWrt release"
+            exit 1
+          fi
+          version="${latest_tag#v}"
+          echo "BUILD_REF=$latest_tag" >> "$GITHUB_ENV"
+          echo "OPENWRT_VERSION_REPO=https://mirrors.ustc.edu.cn/openwrt/releases/$version" >> "$GITHUB_ENV"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Resolved latest stable OpenWrt release: $latest_tag"
 
       - name: Install dependencies
         run: |
@@ -78,29 +89,11 @@ jobs:
           path: |
             ${{ env.CCACHE_DIR }}
             ${{ env.OPENWRT_DIR }}/dl
-          key: ${{ runner.os }}-openwrt-${{ matrix.build_id }}-${{ hashFiles('scripts/generate-config-seed.sh') }}
+          key: ${{ runner.os }}-openwrt-stable-latest-${{ steps.resolve-stable.outputs.version }}-${{ hashFiles('scripts/generate-config-seed.sh') }}
           restore-keys: |
-            ${{ runner.os }}-openwrt-${{ matrix.build_id }}-
-
-      - name: Lock to VERIFIED_COMMIT
-        if: ${{ matrix.verified_commit_lock }}
-        run: |
-          cd "$OPENWRT_DIR"
-          if [ -f "$REPO_PATCH_DIR/VERIFIED_COMMIT" ]; then
-            OPENWRT_COMMIT=$(grep -vE '^\s*(#|$)' "$REPO_PATCH_DIR/VERIFIED_COMMIT" | head -n1 | tr -d '[:space:]' || true)
-            if [ -n "$OPENWRT_COMMIT" ]; then
-              echo "Locking to VERIFIED_COMMIT: $OPENWRT_COMMIT"
-              git fetch --depth 1 origin "$OPENWRT_COMMIT" || { echo "Failed to fetch commit $OPENWRT_COMMIT"; exit 1; }
-              git checkout --force "$OPENWRT_COMMIT"
-            else
-              echo "⚠️ VERIFIED_COMMIT empty, following main latest (patches may drift)"
-            fi
-          else
-            echo "⚠️ VERIFIED_COMMIT file missing, following main latest"
-          fi
+            ${{ runner.os }}-openwrt-stable-latest-
 
       - name: Apply an8855 patches
-        if: ${{ matrix.apply_an8855_patches }}
         run: |
           cd "$OPENWRT_DIR"
           if grep -q "Device/xiaomi_mi-router-ax3000t-an8855" target/linux/mediatek/image/filogic.mk; then
@@ -298,7 +291,7 @@ jobs:
       - name: Collect artifacts
         run: |
           TARGET_DIR="$OPENWRT_DIR/bin/targets/mediatek/filogic"
-          ARTIFACT_DIR="${{ runner.temp }}/artifacts-${{ matrix.artifact_prefix }}"
+          ARTIFACT_DIR="${{ runner.temp }}/artifacts-stable-latest"
           mkdir -p "$ARTIFACT_DIR"
           # Firmware images
           cp "$TARGET_DIR"/*-initramfs-factory.ubi "$ARTIFACT_DIR"/ 2>/dev/null || true
@@ -317,11 +310,6 @@ jobs:
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: firmware-${{ matrix.artifact_prefix }}-${{ github.sha }}
+          name: firmware-stable-latest-${{ github.sha }}
           path: ${{ env.ARTIFACT_DIR }}/*
           retention-days: 90
-
-      - name: Update VERIFIED_COMMIT (master, non-PR, success only)
-        if: ${{ matrix.verified_commit_lock && github.event_name != 'pull_request' && success() }}
-        run: |
-          bash "${SCRIPT_DIR}/update-verified-commit.sh" "${OPENWRT_DIR}" "${REPO_PATCH_DIR}"

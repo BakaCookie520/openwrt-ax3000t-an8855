@@ -421,7 +421,8 @@ This project uses GitHub Actions for continuous integration and semantic-release
 
 | Workflow | File | Triggers | Purpose |
 |----------|------|----------|---------|
-| **CI Build** | `.github/workflows/ci.yml` | Push/PR to `master`/`openwrt-24.10`, daily cron (02:00 UTC), manual dispatch | Build firmware + OpenClash APK, validate image size, upload artifacts |
+| **CI Build** | `.github/workflows/ci.yml` | Push/PR to `master`/`openwrt-24.10`, manual dispatch | Build the two snapshot variants, validate image size, upload firmware/APK artifacts |
+| **Stable Build** | `.github/workflows/stable-latest.yml` | Monthly cron (02:00 UTC), manual dispatch | Resolve the latest stable OpenWrt release and build firmware + OpenClash APK |
 | **Release** | `.github/workflows/release.yml` | Push to `master` (after CI passes) | semantic-release: analyze commits → version → tag → GitHub Release with artifacts |
 
 ### CI Build Details
@@ -429,6 +430,11 @@ This project uses GitHub Actions for continuous integration and semantic-release
 **Matrix builds**:
 - `master` branch: Full pipeline with VERIFIED_COMMIT lock + AN8855 patches
 - `openwrt-24.10` branch: Build without VERIFIED_COMMIT lock (official AN8855 target exists)
+
+The `stable-latest` build is intentionally outside the PR/push matrix so a
+slow full release build cannot delay normal pull-request feedback. Both
+workflows use GitHub Actions cache for the OpenWrt `dl/` download directory and
+the ccache directory.
 
 **Artifacts** (90-day retention):
 - `*-initramfs-factory.ubi` — Flash via recovery/mtd
