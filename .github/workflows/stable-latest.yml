@@ -105,13 +105,13 @@ jobs:
             echo "Applying patches (dry-run first)..."
             for p in "${REPO_PATCH_DIR}"/*.patch; do
               echo "  dry-run: $(basename "$p")"
-              if ! patch -p1 --forward --dry-run -i "$p"; then
+              if ! patch -p1 --forward --no-backup-if-mismatch --dry-run -i "$p"; then
                 echo "❌ Patch $(basename "$p") failed to apply - main has drifted"
                 exit 1
               fi
             done
             for p in "${REPO_PATCH_DIR}"/*.patch; do
-              patch -p1 --forward -i "$p"
+              patch -p1 --forward --no-backup-if-mismatch -i "$p"
             done
             # Verify patch applied
             if ! grep -q "Device/xiaomi_mi-router-ax3000t-an8855" target/linux/mediatek/image/filogic.mk; then
@@ -124,6 +124,8 @@ jobs:
             fi
             echo "✅ Patches applied and verified"
           fi
+          rm -f target/linux/mediatek/filogic/base-files/etc/board.d/02_network.orig
+          bash "${SCRIPT_DIR}/check-board-scripts.sh" "$OPENWRT_DIR"
 
       - name: Add OpenClash feed
         run: |
@@ -267,10 +269,12 @@ jobs:
       - name: Build firmware
         run: |
           cd "$OPENWRT_DIR"
+          bash "${SCRIPT_DIR}/check-board-scripts.sh" "$OPENWRT_DIR"
           make -j$(nproc) V=s 2>&1 | tee build.log
 
       - name: Validate image size
         run: |
+          bash "${SCRIPT_DIR}/check-board-scripts.sh" "$OPENWRT_DIR"
           TARGET_DIR="$OPENWRT_DIR/bin/targets/mediatek/filogic"
           STRICT=1 bash "${SCRIPT_DIR}/check-image-size.sh" "$TARGET_DIR"
 
