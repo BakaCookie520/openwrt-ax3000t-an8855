@@ -1,110 +1,115 @@
 # OpenWrt AX3000T (AN8855)
 
-![CI Build](https://github.com/HughZadora/openwrt-ax3000t-an8855/actions/workflows/ci.yml/badge.svg)
-![Release](https://github.com/HughZadora/openwrt-ax3000t-an8855/actions/workflows/release.yml/badge.svg)
-![License](https://img.shields.io/badge/license-GPL--2.0-blue.svg)
+**简体中文（默认）** | [English](README.en.md)
 
-Build reproducible OpenWrt firmware for the Xiaomi Mi Router AX3000T with the
-AN8855 switch variant. The project produces a single-UBI firmware target for
-stock U-Boot, includes Tailscale in the image, and publishes OpenClash as a
-separate APK so the initramfs remains within the bootloader limit.
+![持续集成](https://github.com/HughZadora/openwrt-ax3000t-an8855/actions/workflows/ci.yml/badge.svg)
+![发布](https://github.com/HughZadora/openwrt-ax3000t-an8855/actions/workflows/release.yml/badge.svg)
+![许可证](https://img.shields.io/badge/license-GPL--2.0-blue.svg)
 
-## Important warning
+为搭载 AN8855 交换芯片的小米 AX3000T 构建可复现的 OpenWrt 固件。
+项目使用适配原厂 U-Boot 的单 UBI 固件布局，内置 Tailscale，并将 OpenClash
+作为独立 APK 发布，避免 initramfs 超过引导程序的加载体积限制。
 
-This firmware is for the **AX3000T AN8855 hardware variant**. Do not flash it
-to an unrelated AX3000T variant. The AN8855 target uses a single UBI layout;
-the standard dual-partition target can boot into recovery or fail to persist.
-Flashing firmware can permanently damage a router. Keep a recovery path and
-verify the exact hardware before proceeding.
+## 重要警告
 
-## Supported builds
+本固件仅适用于 **AX3000T AN8855 硬件版本**，请勿刷入其他 AX3000T 硬件版本。
+AN8855 目标使用单 UBI 布局；标准双分区目标可能导致设备进入恢复模式或无法持久启动。
+刷机可能永久损坏路由器，操作前请确认硬件型号，并准备好恢复方案。
 
-| Build | Source branch/release | Target handling |
+## 支持的构建
+
+| 构建类型 | 源码分支／版本 | 目标处理方式 |
 | --- | --- | --- |
-| Mainline snapshot | `master` | Applies the repository AN8855 patch set and locks to `patches/VERIFIED_COMMIT`. |
-| OpenWrt 24.10 snapshot | `openwrt-24.10` | Uses the upstream AN8855 target without the repository patch set. |
-| Latest stable release | `stable-latest` | Resolves the highest non-prerelease OpenWrt release tag at build time and applies the repository AN8855 patch set. |
+| 主线开发快照 | `master` | 应用本仓库 AN8855 补丁，并锁定到 `patches/VERIFIED_COMMIT`。 |
+| OpenWrt 24.10 开发快照 | `openwrt-24.10` | 使用上游 AN8855 目标，不应用本仓库补丁。 |
+| 最新正式稳定版 | `stable-latest` | 构建时动态选择版本号最高的非预发布 OpenWrt 标签，并应用本仓库 AN8855 补丁。 |
 
-The build includes Tailscale, LuCI, `luci-compat`, networking and diagnostic
-packages, WireGuard, QoS modules, zram, and a curated filesystem/module set.
-OpenClash is built separately as an APK.
+固件包含 Tailscale、LuCI、`luci-compat`、网络与诊断工具、WireGuard、
+QoS 模块、zram，以及精简的文件系统与内核模块。OpenClash 单独构建为 APK。
 
-GitHub Actions builds the two snapshot variants in parallel. The stable
-variant runs in a separate workflow, is resolved dynamically, and is therefore
-not pinned to a specific release tag.
+GitHub Actions 并行构建两个开发快照版本。稳定版使用独立工作流，
+每次动态解析最新正式版本，不固定到某个发布标签。
 
-## Quick start
+## 快速开始
 
-### Requirements
+### 环境要求
 
-- Linux x86_64 or WSL2
-- At least 8 GB RAM and 80 GB free disk space
-- Bash, Git, and a working OpenWrt build environment
-- Optional proxy for domestic downloads:
+- Linux x86_64 或 WSL2
+- 至少 8 GB 内存和 80 GB 可用磁盘空间
+- Bash、Git 和可用的 OpenWrt 构建环境
+- 可选：配置代理以改善下载速度：
   `export ALL_PROXY=socks5h://host:port`
 
-### Prepare and build
+### 准备源码与构建
 
 ```sh
 git clone https://github.com/HughZadora/openwrt-ax3000t-an8855.git
 cd openwrt-ax3000t-an8855
 
-# Prepare the source tree, feeds, and configuration.
+# 准备源码、feeds 和配置。
 bash setup.sh
 
-# Or prepare and compile in one command.
+# 或一次完成准备和编译。
 bash setup.sh build
 ```
 
-To build OpenWrt 24.10:
+构建 OpenWrt 24.10：
 
 ```sh
 bash setup.sh --branch openwrt-24.10 build
 ```
 
-The first full build may take several hours and requires substantial disk space.
+首次完整构建可能耗时数小时，并占用较多磁盘空间。
 
-## Build outputs
+## 构建产物
 
-Firmware images are written to:
+固件镜像输出目录：
 
 ```text
 openwrt-ax3000t/bin/targets/mediatek/filogic/
 ```
 
-Typical outputs include:
+常见产物：
 
-- `*-initramfs-factory.ubi` — temporary RAM boot image;
-- `*-squashfs-sysupgrade.bin` — persistent sysupgrade image;
-- `*-initramfs.itb` — initramfs image checked against the 26 MiB limit.
+- `*-initramfs-factory.ubi`：用于临时内存系统启动的镜像；
+- `*-squashfs-sysupgrade.bin`：用于持久安装和升级的镜像；
+- `*-initramfs.itb`：需通过 26 MiB 体积限制检查的 initramfs 镜像。
 
-The OpenClash package is written to:
+OpenClash 软件包输出路径：
 
 ```text
 openwrt-ax3000t/bin/packages/aarch64_cortex-a53/openclash/luci-app-openclash_<version>_<arch>.apk
 ```
 
-The underscore-separated filename is intentional: it is the package naming
-format emitted by OpenWrt's APK builder.
+文件名中的下划线是 OpenWrt APK 构建器生成的软件包命名格式，并非拼写错误。
 
-## Flashing
+## 刷机与升级
 
-The recommended sequence is initramfs first, then persistent sysupgrade:
+首次安装或迁移分区布局时，先刷入 initramfs，再进行持久 sysupgrade。
+**以下流程不保留现有配置。**
 
 ```sh
-# From the stock/recovery system.
+# 在原厂或恢复系统中执行。
 scp openwrt-*-initramfs-factory.ubi root@192.168.31.1:/tmp/
 ssh root@192.168.31.1 \
   'mtd -f write /tmp/openwrt-*-initramfs-factory.ubi ubi && reboot'
 
-# After the router boots the RAM system.
+# 路由器启动进入内存系统后执行。
 scp openwrt-*-squashfs-sysupgrade.bin root@192.168.31.1:/tmp/
 ssh root@192.168.31.1 \
   'sysupgrade -n /tmp/openwrt-*-squashfs-sysupgrade.bin'
 ```
 
-After the first boot, set a root password and configure Wi-Fi encryption before
-connecting the router to an untrusted network. Install OpenClash separately:
+相同 AN8855 单 UBI 布局的后续升级，可直接在 LuCI 上传
+`*-squashfs-sysupgrade.bin`，并勾选 **保留当前配置**；
+或执行 `sysupgrade /tmp/<image>-squashfs-sysupgrade.bin`，不要添加 `-n`。
+升级前请下载配置备份。保留配置不等于保留后装的软件包，
+升级后仍需重新安装与新固件兼容的软件。
+
+新安装默认 LAN 地址为 `192.168.31.1`，Wi-Fi 默认禁用。
+板级默认值不会在升级时覆盖保留的 LAN、SSID、加密方式或密码。
+首次启动后请设置 root 密码，并在启用 Wi-Fi 前配置加密。
+OpenClash 需单独安装：
 
 ```sh
 scp luci-app-openclash_*.apk root@192.168.31.1:/tmp/
@@ -112,59 +117,58 @@ ssh root@192.168.31.1 \
   'apk add /tmp/luci-app-openclash_*.apk luci-compat'
 ```
 
-## Repository layout
+## 仓库结构
 
 ```text
-patches/                         AN8855 patch set and verified source commit
-setup.sh                         Build orchestration entry point
-scripts/check-image-size.sh      Initramfs size validation
-scripts/generate-config-seed.sh  Reproducible package/config seed
-scripts/inject-firstboot-defaults.sh  First-boot defaults
-openwrt-ax3000t/                 Ignored OpenWrt source/build tree
-docs/                            Stable development and operations reference
-.github/workflows/               CI, release, and repository checks
+patches/                             AN8855 补丁和已验证的源码提交
+setup.sh                             构建入口
+scripts/check-image-size.sh          initramfs 体积检查
+scripts/check-board-scripts.sh       板级脚本备份安全检查
+scripts/generate-config-seed.sh      可复现的软件包／配置种子
+scripts/inject-firstboot-defaults.sh  新安装的板级默认值
+openwrt-ax3000t/                     忽略提交的 OpenWrt 源码与构建目录
+docs/                                开发与运维参考文档
+.github/workflows/                   构建、发布和仓库检查
 ```
 
-## Common commands
+## 常用命令
 
-| Task | Command |
+| 任务 | 命令 |
 | --- | --- |
-| Prepare source | `bash setup.sh` |
-| Full build | `bash setup.sh build` |
-| Build OpenWrt 24.10 | `bash setup.sh --branch openwrt-24.10 build` |
-| Configure packages | `cd openwrt-ax3000t && make menuconfig` |
-| Compile OpenClash | `cd openwrt-ax3000t && make package/feeds/openclash/luci-app-openclash/compile V=s` |
-| Validate initramfs size | `scripts/check-image-size.sh openwrt-ax3000t/bin/targets/mediatek/filogic` |
-| Repository baseline | `scripts/repository-check` |
+| 准备源码 | `bash setup.sh` |
+| 完整构建 | `bash setup.sh build` |
+| 构建 OpenWrt 24.10 | `bash setup.sh --branch openwrt-24.10 build` |
+| 配置软件包 | `cd openwrt-ax3000t && make menuconfig` |
+| 编译 OpenClash | `cd openwrt-ax3000t && make package/feeds/openclash/luci-app-openclash/compile V=s` |
+| 检查 initramfs 体积 | `scripts/check-image-size.sh openwrt-ax3000t/bin/targets/mediatek/filogic` |
+| 检查板级脚本备份 | `bash scripts/check-board-scripts.sh openwrt-ax3000t` |
+| 仓库基线检查 | `scripts/repository-check` |
 
 ## GitHub Actions
 
-The CI workflow builds the `master` and `openwrt-24.10` snapshot variants,
-checks the initramfs size, compiles OpenClash, and uploads firmware/APK
-artifacts. The separate `stable-latest.yml` workflow performs the same build
-for the latest stable OpenWrt release. Both workflows cache OpenWrt downloads
-and compiler results; artifacts are retained by GitHub Actions for 90 days.
+CI 工作流构建 `master` 和 `openwrt-24.10` 开发快照，
+检查 initramfs 体积、编译 OpenClash，并上传固件和 APK 产物。
+独立的 `stable-latest.yml` 工作流对最新 OpenWrt 正式稳定版执行同样的构建。
+两个工作流均缓存下载文件和编译结果；GitHub Actions 产物保留 90 天。
 
-After a successful `master` firmware build, semantic-release determines the
-version from conventional commits, generates the changelog, creates a tag, and
-publishes a GitHub Release with the validated firmware/APK assets.
+`master` 固件构建成功后，semantic-release 根据约定式提交确定版本，
+生成变更日志、创建标签，并发布包含已验证固件和 APK 的 GitHub Release。
 
-## Constraints
+## 限制与注意事项
 
-- The stock bootloader requires the AN8855 single-UBI layout.
-- The initramfs FIT image must remain at or below 26 MiB.
-- OpenClash is intentionally not included in the firmware image.
-- The standard AX3000T/MT7531 target is not interchangeable with this target.
-- OpenWrt source and build outputs are local ignored artifacts, not repository
-  state.
+- 原厂引导程序要求使用 AN8855 单 UBI 布局。
+- initramfs FIT 镜像不得超过 26 MiB。
+- OpenClash 特意不内置于固件镜像。
+- 标准 AX3000T／MT7531 目标不能与本目标混用。
+- OpenWrt 源码和构建产物属于本地忽略文件，不纳入仓库版本管理。
 
-## Documentation
+## 文档
 
-- [Development guide](docs/development/guide.md)
-- [Router operations](docs/operations/home-router.md)
-- [Build experience](docs/reports/build-experience.md)
-- [Router state](docs/reference/router-state.md)
+- [开发指南](docs/development/guide.md)
+- [路由器运维](docs/operations/home-router.md)
+- [构建经验](docs/reports/build-experience.md)
+- [路由器状态](docs/reference/router-state.md)
 
-## License
+## 许可证
 
-GPL-2.0, consistent with OpenWrt.
+GPL-2.0，与 OpenWrt 保持一致。

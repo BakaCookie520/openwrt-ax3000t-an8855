@@ -2,6 +2,10 @@ version: 1
 
 root_readme:
   purpose: project entry point
+  path: README.md
+  default_language: zh-CN
+  translations:
+    en: README.en.md
 
 sections:
   architecture:
