@@ -169,3 +169,37 @@ tailscale debug prefs | grep -iA1 AdvertiseRoutes  # 确认通告子网
 
 - 远端访问家庭 LAN 内其它设备需子网路由审批 + 客户端 accept-routes（已在本机与办公室 `dev` 验证）。
 - 依赖家庭网络链路正常；WAN 掉线即失去外部可达性。
+
+## 固件升级与配置保留
+
+- 相同 AN8855 单 UBI 布局的日常升级，在 LuCI 使用 sysupgrade 镜像并勾选
+  **保留当前配置**。先下载配置备份；不要重新走 initramfs/`mtd write` 的首次安装流程。
+- 命令行日常升级使用 `sysupgrade /tmp/<固件>-squashfs-sysupgrade.bin`。
+  `sysupgrade -n` 明确不保留配置，只用于首次安装或有意清空配置的迁移。
+- 新固件通过 board.json 为全新安装提供 `192.168.31.1`，不再用 uci-defaults
+  覆盖 LAN 或 Wi-Fi。全新安装保持上游 Wi-Fi 禁用默认值；保留配置升级不应
+  改动原 SSID、加密方式、Wi-Fi 密码或 root 密码。
+- 旧固件的 `99-router-home-custom` 会在保留配置升级后仍重设 LAN 和开放 Wi-Fi。
+  修复源码不会追溯恢复已经被旧固件覆盖的无线设置；需要根据自己的备份手动恢复。
+- 保留配置不等于保留后装的软件包。主题、ttyd 等可能只剩配置文件，必须安装
+  与新固件及包管理器兼容的版本；不要把旧版本内核模块或整个 overlay 强行恢复。
+- ttyd 的 root 自动登录仅跳过终端内的登录步骤，不应同时取消网页访问认证。
+  只允许通过 LAN 访问，使用 HTTPS，禁止向 WAN 开放免认证 root 终端；
+  凭据不写入仓库。ttyd 的 Basic Authentication 凭据独立于系统密码，
+  修改 root 密码后需要同步更新 ttyd 凭据；配置和私钥应仅允许 root 读取，
+  并将独立的 TLS 文件目录加入 sysupgrade 保留清单。
+
+## 端口状态重复
+
+- LuCI 的物理端口列表来自板级定义，不等同于当前 LAN/WAN 接口配置。
+  如果 `lan2/lan3/lan4` 重复并出现不存在的 `lan1`，检查 `/etc/board.json`
+  的 `network.lan.ports` 以及 `/etc/board.d/02_network.orig`。
+- OpenWrt 的 board_detect 会执行 board.d 中的所有非空文件，补丁备份 `.orig`
+  也会被执行。AN8855 补丁前后的 `02_network` 同时运行会累加 LAN 端口，
+  导致重复显示。不是 Argon 主题问题，也不表示真实接口或流量翻倍。
+- 本地和云端应用补丁均禁用不匹配备份，并移除复用源码中的已知
+  `02_network.orig`；构建前后检查运行时 board.d，遇到其他 `.orig`、`.rej`
+  或 `~` 备份即停止构建。
+- 在线修复前备份板级文件，屏蔽错误备份脚本，再单独生成、验证并替换
+  `/etc/board.json`。只修复板级元数据，不重写 `/etc/config/network`，
+  不执行 config_generate，也不重启网络；刷新 LuCI 查看结果。

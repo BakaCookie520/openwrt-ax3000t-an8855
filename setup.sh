@@ -139,7 +139,7 @@ else
     # 避免编到一半才因补丁问题崩溃。
     for p in "${REPO_PATCH_DIR}"/*.patch; do
         echo "    dry-run: $(basename "$p")"
-        if ! patch -p1 --forward --dry-run -i "$p"; then
+        if ! patch -p1 --forward --no-backup-if-mismatch --dry-run -i "$p"; then
             echo "  ❌ 补丁 $(basename "$p") 无法应用:main 已漂移。" >&2
             echo "     方案A: 把 main 锁定到 patches/VERIFIED_COMMIT 里的已验证 commit。" >&2
             echo "     方案B: 手工修此补丁后重试。" >&2
@@ -147,7 +147,7 @@ else
         fi
     done
     for p in "${REPO_PATCH_DIR}"/*.patch; do
-        patch -p1 --forward -i "$p"
+        patch -p1 --forward --no-backup-if-mismatch -i "$p"
     done
     echo "  已应用 an8855 目标补丁"
     # 应用后显式校验关键符号确实出现,防止"看似成功实则没生效"。
@@ -161,6 +161,10 @@ else
     fi
     echo "  补丁生效校验通过。"
 fi
+
+# Remove only this repository's known legacy patch backup, also on reused trees.
+rm -f target/linux/mediatek/filogic/base-files/etc/board.d/02_network.orig
+bash "${SCRIPT_DIR}/check-board-scripts.sh" "$OPENWRT_DIR"
 
 echo ""
 echo "=== 步骤 3: 更新并安装 feeds ==="
@@ -402,58 +406,21 @@ echo ""
 echo "  如需调整运行: make menuconfig"
 
 echo ""
-echo "=== 步骤 6: 注入首次启动定制(IP 192.168.31.1 / WiFi 自动开启) ==="
-UCIDEF_DIR="package/base-files/files/etc/uci-defaults"
-mkdir -p "$UCIDEF_DIR"
-cat > "$UCIDEF_DIR/99-router-home-custom" <<'EOF'
-#!/bin/sh
-# 首次启动定制:
-#   1) LAN 默认 IP 改为 192.168.31.1 (Xiaomi 习惯)
-#   2) WiFi 默认开启 (2.4G / 5G,无加密),方便无网线时连接配置
-
-# --- LAN IP ---
-uci -q set network.lan.ipaddr='192.168.31.1'
-uci -q set network.lan.netmask='255.255.255.0'
-uci -q commit network
-
-# --- WiFi 启用 + 开放 SSID ---
-# 2.4G 与 5G 的 wifi-device section 通常是 radio0 / radio1
-for radio in radio0 radio1; do
-    [ -n "$(uci -q get wireless.$radio)" ] || continue
-    uci -q set wireless.$radio.disabled='0'
-
-    iface="$(uci -q get wireless.$radio | sed -n 's/.*\(default_radio[0-9]*\).*/\1/p')"
-    [ -z "$iface" ] && iface="default_$radio"
-    if [ -n "$(uci -q get wireless.$iface)" ]; then
-        uci -q set wireless.$iface.disabled='0'
-        uci -q set wireless.$iface.encryption='none'
-        case "$radio" in
-            radio0) uci -q set wireless.$iface.ssid='OpenWrt-AX3000T' ;;
-            radio1) uci -q set wireless.$iface.ssid='OpenWrt-AX3000T-5G' ;;
-        esac
-    fi
-done
-uci -q commit wireless
-
-# 立即生效
-wifi reload 2>/dev/null
-
-exit 0
-EOF
-chmod +x "$UCIDEF_DIR/99-router-home-custom"
-echo "  已注入: $UCIDEF_DIR/99-router-home-custom"
-echo "  首次启动: LAN=192.168.31.1, WiFi SSID: OpenWrt-AX3000T / OpenWrt-AX3000T-5G (无加密)"
-echo "  请尽快在 LuCI 中设置 root 密码与 WiFi 加密!"
+echo "=== 步骤 6: 注入新安装板级默认值(保留升级配置) ==="
+bash "${SCRIPT_DIR}/inject-firstboot-defaults.sh" "$OPENWRT_DIR"
+echo "  新安装: LAN=192.168.31.1, WiFi 默认禁用；升级不覆盖已有配置。"
 
 if [ "$BUILD_MODE" = "1" ]; then
     echo ""
     echo "=== 步骤 7: 开始编译(固件不含 OpenClash) ==="
     echo "  运行: make -j\$(nproc) V=s | tee build.log"
+    bash "${SCRIPT_DIR}/check-board-scripts.sh" "$OPENWRT_DIR"
     make -j"$(nproc)" V=s 2>&1 | tee build.log
 
     echo ""
     echo "=== 步骤 7.5: initramfs 体积校验(原厂 U-Boot 上限) ==="
     TARGET_DIR="$OPENWRT_DIR/bin/targets/mediatek/filogic"
+    bash "${SCRIPT_DIR}/check-board-scripts.sh" "$OPENWRT_DIR"
     STRICT=1 bash "${SCRIPT_DIR}/check-image-size.sh" "$TARGET_DIR" \
         || { echo "  ❌ initramfs 超限,停止 OpenClash 编译以避免在坏产物上继续。" >&2; exit 1; }
 
