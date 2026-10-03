@@ -10,7 +10,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: repository-baseline-${{ github.ref }}
+  # Keep standalone checks separate from checks reused by the PR workflow.
+  group: repository-baseline-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
