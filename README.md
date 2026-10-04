@@ -2,8 +2,8 @@
 
 **简体中文（默认）** | [English](README.en.md)
 
-![持续集成](https://github.com/HughZadora/openwrt-ax3000t-an8855/actions/workflows/ci.yml/badge.svg)
-![发布](https://github.com/HughZadora/openwrt-ax3000t-an8855/actions/workflows/release.yml/badge.svg)
+![持续集成](https://github.com/BakaCookie520/openwrt-ax3000t-an8855/actions/workflows/ci.yml/badge.svg)
+![发布](https://github.com/BakaCookie520/openwrt-ax3000t-an8855/actions/workflows/release.yml/badge.svg)
 ![许可证](https://img.shields.io/badge/license-GPL--2.0-blue.svg)
 
 为搭载 AN8855 交换芯片的小米 AX3000T 构建可复现的 OpenWrt 固件。
