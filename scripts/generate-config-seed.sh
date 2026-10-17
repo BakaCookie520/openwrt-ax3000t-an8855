@@ -7,6 +7,11 @@
 set -euo pipefail
 
 VERSION_REPO="${OPENWRT_VERSION_REPO:-https://mirrors.ustc.edu.cn/openwrt/snapshots}"
+case "${FIRMWARE_PROFILE:-full}" in
+    full) APP_STATE=y ;;
+    recovery) APP_STATE=m ;;
+    *) echo "Unknown FIRMWARE_PROFILE: $FIRMWARE_PROFILE" >&2; exit 1 ;;
+esac
 
 cat > .config.seed <<CONFIG_EOF
 CONFIG_TARGET_mediatek=y
@@ -29,8 +34,26 @@ CONFIG_PACKAGE_luci-lua-runtime=y
 CONFIG_PACKAGE_luci-app-openclash=m
 CONFIG_PACKAGE_luci-app-nlbwmon=y
 
-CONFIG_PACKAGE_tailscale=y
-CONFIG_PACKAGE_luci-app-tailscale-community=y
+# Latest Nikki feed source; stable Mihomo provider, never mihomo-alpha.
+CONFIG_PACKAGE_nikki=${APP_STATE}
+CONFIG_PACKAGE_luci-app-nikki=${APP_STATE}
+CONFIG_PACKAGE_luci-i18n-nikki-zh-cn=${APP_STATE}
+CONFIG_PACKAGE_mihomo-meta=${APP_STATE}
+# CONFIG_PACKAGE_mihomo-alpha is not set
+CONFIG_PACKAGE_yq=${APP_STATE}
+CONFIG_PACKAGE_firewall4=y
+CONFIG_PACKAGE_ca-bundle=y
+CONFIG_PACKAGE_kmod-inet-diag=y
+CONFIG_PACKAGE_kmod-dummy=y
+CONFIG_PACKAGE_kmod-nf-socket=y
+CONFIG_PACKAGE_kmod-nft-socket=y
+CONFIG_PACKAGE_kmod-nf-tproxy=y
+CONFIG_PACKAGE_kmod-nft-tproxy=y
+
+CONFIG_PACKAGE_ttyd=y
+CONFIG_PACKAGE_luci-app-ttyd=y
+CONFIG_PACKAGE_tailscale=${APP_STATE}
+CONFIG_PACKAGE_luci-app-tailscale-community=${APP_STATE}
 
 CONFIG_PACKAGE_kmod-zram=y
 CONFIG_PACKAGE_zram-swap=y

@@ -11,10 +11,11 @@
 #   * 原厂 U-Boot + AN8855 只能用**单 UBI 布局**才能持久启动;
 #     官方 stock 双分区目标 (xiaomi_mi-router-ax3000t) 在本机会落回恢复页,
 #     勿用。详见 docs/reference/router-state.md §0。
+#   * 完整升级固件预装 Nikki/Mihomo 与 ttyd；精简恢复镜像不带大型 Go 服务。
 #   * 无自定义 fwx 内核补丁,保持纯净主线。
 #   * OpenClash (luci-app-openclash) 以独立 apk 提供,不进固件(避免 initramfs
 #     超过原厂 U-Boot 加载体积上限);装时 apk add 并自动拉 luci-compat 等依赖。
-#   * 内核模块只能编译期打入(无法 apk 安装),本脚本预置了**精简工具集**:
+#   * 自编译内核需使用同一次构建的匹配模块包,本脚本预置了**精简工具集**:
 #     zram、iptables+nftables 双栈 + 核心 netfilter、wireguard/veth/tun 隧道、
 #     QoS(cake/fq-pie)、ext4、tcpdump/conntrack/ipset/tc-full 等诊断工具。
 #     原"完整工具集"含 179 个 kmod,使 initramfs-FIT 达 27.9MB,超过原厂 U-Boot
@@ -28,7 +29,7 @@
 #   (--branch 与 build 可任意顺序;默认 main,行为与旧版一致)
 # ============================================================
 
-set -e
+set -euo pipefail
 
 # 先做自身与依赖脚本的 bash 语法自检,语法错误第一时间失败,避免编到一半才崩。
 bash -n "$0"
@@ -69,8 +70,6 @@ export OPENWRT_DIR="$(pwd)/openwrt-ax3000t"
 export REPO_PATCH_DIR="$(cd "$(dirname "$0")" && pwd)/patches"
 # 本仓库 scripts/ 目录(构建后体积校验等)
 export SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)/scripts"
-OPENCLASH_URL="https://github.com/vernesong/OpenClash.git"
-OPENCLASH_CFG="src-git openclash ${OPENCLASH_URL}"
 
 # 锁定到一个已验证可编译的 main commit(防主线漂移导致补丁失效)。
 # 值由 patches/VERIFIED_COMMIT 提供;置空则跟随 main 最新(不推荐)。
@@ -104,22 +103,8 @@ fi
 cd "$OPENWRT_DIR"
 
 echo ""
-echo "=== 步骤 2: 添加 OpenClash feed ==="
-# 注意:必须把 feed 加到官方的 feeds.conf.default(含 luci/packages 等官方源),
-# 而不是只新建 feeds.conf(那会让 OpenWrt 只认 feeds.conf 而丢掉官方源)。
-if [ ! -f feeds.conf ]; then
-    cp feeds.conf.default feeds.conf
-fi
-if ! grep -q "OpenClash" feeds.conf; then
-    cat >> feeds.conf <<EOF
-# OpenClash (Clash/Mihomo 客户端)
-${OPENCLASH_CFG}
-EOF
-    echo "  已添加: ${OPENCLASH_CFG}"
-else
-    echo "  OpenClash feed 已存在,跳过"
-fi
-
+echo "=== 步骤 2: 准备 OpenClash / Nikki feed 配置 ==="
+# Both feeds are refreshed after applying board patches (step 3).
 echo ""
 echo "=== 步骤 2.5: 应用 an8855 单 UBI 目标补丁(仅 main 分支,关键!) ==="
 # 主线 main 只有 stock 双分区 / ubootmod 目标,AN8855 + 原厂 U-Boot 需要
@@ -168,8 +153,7 @@ bash "${SCRIPT_DIR}/check-board-scripts.sh" "$OPENWRT_DIR"
 
 echo ""
 echo "=== 步骤 3: 更新并安装 feeds ==="
-./scripts/feeds update -a
-./scripts/feeds install -a
+bash "${SCRIPT_DIR}/prepare-feeds.sh" "$OPENWRT_DIR"
 
 echo ""
 echo "=== 步骤 4: 生成默认配置 ==="
@@ -286,120 +270,13 @@ for s in \
     PACKAGE_htop PACKAGE_iftop; do
     sed -i "/^CONFIG_$s=/d; /^# CONFIG_${s} is not set\$/d" .config
 done
-cat >> .config <<'EOF'
-CONFIG_TARGET_mediatek=y
-CONFIG_TARGET_mediatek_filogic=y
-CONFIG_TARGET_mediatek_filogic_DEVICE_xiaomi_mi-router-ax3000t-an8855=y
-
-# 软件源(apk)镜像:换为中科大 USTC,国内下载快
-# 注意:VERSION_* 挂在 VERSIONOPT 菜单下,必须先 CONFIG_VERSIONOPT=y 才会生效
-CONFIG_VERSIONOPT=y
-CONFIG_VERSION_REPO="https://mirrors.ustc.edu.cn/openwrt/snapshots"
-
-CONFIG_PACKAGE_luci=y
-CONFIG_PACKAGE_luci-ssl=y
-CONFIG_LUCI_LANG_zh_Hans=y
-
-# 剔除用不到的默认 LuCI 模块(路由器无用,保持菜单干净)
-# CONFIG_PACKAGE_luci-mod-dsl is not set
-# CONFIG_PACKAGE_luci-i18n-dsl-zh-cn is not set
-
-# ⚠️ OpenClash 不再打进固件:其 apk 约 8MB(含 clash core),会使 initramfs-FIT
-# 超过原厂 U-Boot 的加载体积上限(26MB 可启动,34MB 起不来)。改为单独编译成
-# package,装时从 apk 源 `apk add luci-app-openclash` 即可。需要时在最后一步
-# make package/.../compile 单独产出。
-# ── 但 luci-compat(+luci-lua-runtime)必须保留:luci-base 渲染依赖其提供的
-#    luci.ucodebridge 模块,缺失会报 "module 'luci.ucodebridge' not found"。
-CONFIG_PACKAGE_luci-compat=y
-CONFIG_PACKAGE_luci-lua-runtime=y
-# CONFIG_PACKAGE_luci-app-openclash=y
-CONFIG_PACKAGE_luci-app-nlbwmon=y
-
-CONFIG_PACKAGE_tailscale=y
-CONFIG_PACKAGE_luci-app-tailscale-community=y
-
-
-# ================= 工具集(精简版,控制体积以适配原厂 U-Boot) =================
-# 背景:5a26684 一次性加了 179 个 kmod,initramfs-FIT 撑到 27.9MB,超过原厂
-# U-Boot 加载上限(26MB 可启动,27.9MB 起不来,内核反复 panic/复位)。故只保留
-# 核心常用模块,去掉重文件系统(btrfs/xfs/ntfs3 等)、USB 驱动、异类隧道/协议、
-# 多余 sched 变体与启动高危项(mtdoops/softdog/phylink/of-mdio/fixed-phy),
-# 使 initramfs 回到 26MB 以内。更多功能在 make menuconfig 按需勾选,或单独
-# 编译为 apk 再装。
-# --- zram:内存压缩 ---
-CONFIG_PACKAGE_kmod-zram=y
-CONFIG_PACKAGE_zram-swap=y
-
-# --- 防火墙:iptables + nftables 双栈(fw4 默认 nftables) ---
-CONFIG_PACKAGE_iptables=y
-CONFIG_PACKAGE_iptables-nft=y
-CONFIG_PACKAGE_ip6tables-nft=y
-CONFIG_PACKAGE_xtables-legacy=y
-CONFIG_PACKAGE_xtables-nft=y
-
-# --- nftables/iptables 内核模块(核心,OpenClash 兼容/Tailscale 常用) ---
-CONFIG_PACKAGE_kmod-ipt-core=y
-CONFIG_PACKAGE_kmod-ipt-nat=y
-CONFIG_PACKAGE_kmod-ipt-nat6=y
-CONFIG_PACKAGE_kmod-ipt-conntrack=y
-CONFIG_PACKAGE_kmod-ipt-ipset=y
-CONFIG_PACKAGE_kmod-ipt-offload=y
-CONFIG_PACKAGE_kmod-nft-bridge=y
-CONFIG_PACKAGE_kmod-nft-compat=y
-CONFIG_PACKAGE_kmod-nft-netdev=y
-CONFIG_PACKAGE_kmod-nf-ipt=y
-CONFIG_PACKAGE_kmod-nf-ipt6=y
-CONFIG_PACKAGE_kmod-nf-nathelper=y
-CONFIG_PACKAGE_kmod-nf-nathelper-extra=y
-CONFIG_PACKAGE_kmod-nf-nathelper-pptp=y
-CONFIG_PACKAGE_kmod-nf-nathelper-tftp=y
-CONFIG_PACKAGE_kmod-nf-conncount=y
-
-# --- 隧道/虚拟网卡(常用) ---
-CONFIG_PACKAGE_kmod-wireguard=y
-CONFIG_PACKAGE_kmod-veth=y
-CONFIG_PACKAGE_kmod-tun=y
-CONFIG_PACKAGE_kmod-tcp-bbr=y
-
-# --- QoS / tc(保留 cake/fq-pie,其余按需) ---
-CONFIG_PACKAGE_kmod-sched-core=y
-CONFIG_PACKAGE_kmod-sched-cake=y
-CONFIG_PACKAGE_kmod-sched-fq-pie=y
-
-# --- 文件系统(仅保留 ext4,重文件系统已剔除以控制体积) ---
-CONFIG_PACKAGE_kmod-fs-ext4=y
-
-# --- 连接跟踪 / IP 集 / 路由 / 流量工具 ---
-CONFIG_PACKAGE_conntrack=y
-CONFIG_PACKAGE_ipset=y
-CONFIG_PACKAGE_ip-full=y
-CONFIG_PACKAGE_ip-bridge=y
-CONFIG_PACKAGE_tc-full=y
-
-# --- 网络诊断/抓包 ---
-CONFIG_PACKAGE_tcpdump=y
-CONFIG_PACKAGE_iperf3=y
-CONFIG_PACKAGE_ethtool=y
-CONFIG_PACKAGE_mtr-json=y
-CONFIG_PACKAGE_nlbwmon=y
-
-# --- 基础实用工具 ---
-CONFIG_PACKAGE_curl=y
-CONFIG_PACKAGE_wget-ssl=y
-CONFIG_PACKAGE_nano=y
-CONFIG_PACKAGE_openssl-util=y
-CONFIG_PACKAGE_openssh-client=y
-CONFIG_PACKAGE_coreutils=y
-CONFIG_PACKAGE_htop=y
-CONFIG_PACKAGE_iftop=y
-EOF
-make defconfig
+bash "${SCRIPT_DIR}/apply-build-profile.sh" "$OPENWRT_DIR" full
 
 echo ""
 echo "  已自动选中:"
 echo "    Target Profile -> Xiaomi Mi Router AX3000T (AN8855, 单 UBI, 原厂 U-Boot)"
 echo "    LuCI (+ SSL,中文)"
-echo "    OpenClash 仅单独编译为 apk(不进固件) / Tailscale + luci-app-tailscale-community"
+echo "    完整版预装 Nikki/Mihomo、ttyd、Tailscale；恢复版不含大型代理与 Tailscale"
 echo "    zram 内存压缩 / iptables+nftables 双栈 / 核心 netfilter / wireguard 隧道 / QoS(cake/fq-pie)"
 echo "    tcpdump / conntrack / ipset / tc-full / ext4 / 诊断工具 (精简版,适配原厂 U-Boot 体积上限)"
 echo ""
@@ -411,46 +288,9 @@ bash "${SCRIPT_DIR}/inject-firstboot-defaults.sh" "$OPENWRT_DIR"
 echo "  新安装: LAN=192.168.31.1, WiFi 默认禁用；升级不覆盖已有配置。"
 
 if [ "$BUILD_MODE" = "1" ]; then
-    echo ""
-    echo "=== 步骤 7: 开始编译(固件不含 OpenClash) ==="
-    echo "  运行: make -j\$(nproc) V=s | tee build.log"
-    bash "${SCRIPT_DIR}/check-board-scripts.sh" "$OPENWRT_DIR"
-    make -j"$(nproc)" V=s 2>&1 | tee build.log
-
-    echo ""
-    echo "=== 步骤 7.5: initramfs 体积校验(原厂 U-Boot 上限) ==="
-    TARGET_DIR="$OPENWRT_DIR/bin/targets/mediatek/filogic"
-    bash "${SCRIPT_DIR}/check-board-scripts.sh" "$OPENWRT_DIR"
-    STRICT=1 bash "${SCRIPT_DIR}/check-image-size.sh" "$TARGET_DIR" \
-        || { echo "  ❌ initramfs 超限,停止 OpenClash 编译以避免在坏产物上继续。" >&2; exit 1; }
-
-    echo ""
-    echo "=== 步骤 8: 单独编译 OpenClash 为 apk(不进固件,装时 apk add) ==="
-    echo "  运行: make package/feeds/openclash/luci-app-openclash/compile V=s"
-    make package/feeds/openclash/luci-app-openclash/compile V=s 2>&1 | tee -a build.log
-    # 校验 apk 确实生成
-    APK_GLOB="$OPENWRT_DIR/bin/packages/aarch64_cortex-a53/openclash/luci-app-openclash-*.apk"
-    if ! ls $APK_GLOB >/dev/null 2>&1; then
-        echo "  ❌ 未生成 OpenClash apk(路径:$APK_GLOB),请检查 openclash feed 是否安装成功。" >&2
-        exit 1
-    fi
-    echo "  OpenClash apk 已生成:"
-    ls -lh $APK_GLOB
-
-    echo ""
-    echo "=== 步骤 9: 产物汇总(体积校验 + sha256) ==="
-    STRICT=1 bash "${SCRIPT_DIR}/check-image-size.sh" "$TARGET_DIR"
-    echo ""
-    echo "  OpenClash apk:"
-    for f in $APK_GLOB; do
-        printf "    %s  %s\n" "$(sha256sum "$f" | cut -d' ' -f1)" "$(basename "$f")"
-    done
-    echo ""
+    echo "=== 步骤 7: 构建完整升级镜像和精简恢复镜像 ==="
+    bash "${SCRIPT_DIR}/build-firmware.sh" "$OPENWRT_DIR"
 else
-    echo ""
-    echo "============================================"
-    echo "  准备完成!请执行:"
-    echo "    make menuconfig   # 可微调软件包(目标已预置)"
-    echo "    make -j\$(nproc) V=s | tee build.log"
-    echo "============================================"
+    echo "准备完成。构建双镜像请执行:"
+    echo "  bash ${SCRIPT_DIR}/build-firmware.sh $OPENWRT_DIR"
 fi

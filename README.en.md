@@ -8,8 +8,41 @@
 
 Build reproducible OpenWrt firmware for the Xiaomi Mi Router AX3000T with the
 AN8855 switch variant. The project produces a single-UBI firmware target for
-stock U-Boot, includes Tailscale in the image, and publishes OpenClash as a
-separate APK so the initramfs remains within the bootloader limit.
+stock U-Boot. Its full sysupgrade preinstalls Nikki/Mihomo, ttyd and Tailscale;
+a separate slim recovery initramfs stays within the bootloader limit.
+OpenClash remains an optional standalone package.
+
+## Preinstalled services and dual-image artifacts
+
+Every build refreshes `nikkinikki-org/OpenWrt-nikki` from its official `main` feed.
+The full sysupgrade image includes Nikki, its LuCI interface and Simplified Chinese
+translation, the feed-selected stable `mihomo-meta` core, matching kernel modules,
+ttyd/LuCI terminal, and existing Tailscale functionality. Nikki starts disabled;
+no subscriptions, router passwords, or proxy credentials are embedded.
+
+`bash setup.sh build` and all Actions builds use the same dual-pass builder.
+Validated files are saved under `openwrt-ax3000t/bin/ax3000t-artifacts/`:
+
+- `full-*-squashfs-sysupgrade.bin`: the complete daily-use system.
+- `recovery-*-initramfs*`: a temporary recovery system without Nikki/Mihomo,
+  yq or Tailscale, but with LuCI/ttyd; recovery FIT must not exceed 26 MiB.
+- `packages.tar.gz`: matching APK/IPK packages and indexes, including kernel modules
+  and optional OpenClash. Use the package format appropriate for the selected branch.
+- Manifests, full/recovery configs, build provenance and SHA256 checksums.
+
+Oversized full initramfs files are never exported. Full sysupgrade files have a
+conservative 100 MiB limit for the 112 MiB UBI partition. Kernel package/ABI values
+must match between both passes. The original full build config is restored even
+on failure. An existing artifact output directory must be empty; optionally pass
+a new output directory to `bash scripts/build-firmware.sh <tree> <output>`.
+
+Use the `full-` image for persistent upgrades and `recovery-` only for recovery.
+Preserved network/Wi-Fi settings are not overwritten. Upstream ttyd defaults bind
+`@lan` and run `/bin/login`; retained old ttyd settings are not migrated automatically.
+An old `lan4` binding should be corrected to `@lan`/`br-lan` manually. A bridged AP
+still needs a separately planned proxy topology; installation alone does not
+redirect client traffic. Never enable Nikki and OpenClash transparent interception
+at the same time. Test offline with `bash scripts/tests/test-nikki-build.sh`.
 
 ## Important warning
 
@@ -74,20 +107,10 @@ Firmware images are written to:
 openwrt-ax3000t/bin/targets/mediatek/filogic/
 ```
 
-Typical outputs include:
-
-- `*-initramfs-factory.ubi` — temporary RAM boot image;
-- `*-squashfs-sysupgrade.bin` — persistent sysupgrade image;
-- `*-initramfs.itb` — initramfs image checked against the 26 MiB limit.
-
-The OpenClash package is written to:
-
-```text
-openwrt-ax3000t/bin/packages/aarch64_cortex-a53/openclash/luci-app-openclash_<version>_<arch>.apk
-```
-
-The underscore-separated filename is intentional: it is the package naming
-format emitted by OpenWrt's APK builder.
+Use validated deliverables from `openwrt-ax3000t/bin/ax3000t-artifacts/`, not
+unfiltered files from the intermediate target directory. See the dual-image
+section above for the full/recovery prefixes, package archive and provenance.
+OpenClash remains optional and is included as a package in `packages.tar.gz`.
 
 ## Flashing and upgrading
 
@@ -96,14 +119,14 @@ persistent sysupgrade. **This procedure does not preserve existing settings.**
 
 ```sh
 # From the stock/recovery system.
-scp openwrt-*-initramfs-factory.ubi root@192.168.31.1:/tmp/
+scp recovery-*-initramfs-factory.ubi root@192.168.31.1:/tmp/
 ssh root@192.168.31.1 \
-  'mtd -f write /tmp/openwrt-*-initramfs-factory.ubi ubi && reboot'
+  'mtd -f write /tmp/recovery-*-initramfs-factory.ubi ubi && reboot'
 
 # After the router boots the RAM system.
-scp openwrt-*-squashfs-sysupgrade.bin root@192.168.31.1:/tmp/
+scp full-*-squashfs-sysupgrade.bin root@192.168.31.1:/tmp/
 ssh root@192.168.31.1 \
-  'sysupgrade -n /tmp/openwrt-*-squashfs-sysupgrade.bin'
+  'sysupgrade -n /tmp/full-*-squashfs-sysupgrade.bin'
 ```
 
 For subsequent upgrades with the same AN8855 single-UBI layout, use the
@@ -115,14 +138,9 @@ reinstall extra packages; reinstall compatible packages after the upgrade.
 New installations default to LAN IP `192.168.31.1` with Wi-Fi disabled.
 The board defaults do not overwrite retained LAN, SSID, encryption, or password
 settings during an upgrade. After the first boot, set a root password and
-configure Wi-Fi encryption before enabling wireless access. Install OpenClash
-separately:
-
-```sh
-scp luci-app-openclash_*.apk root@192.168.31.1:/tmp/
-ssh root@192.168.31.1 \
-  'apk add /tmp/luci-app-openclash_*.apk luci-compat'
-```
+configure Wi-Fi encryption before enabling wireless access. Nikki is preinstalled
+but disabled until configured. OpenClash can be installed separately from the
+matching package archive, using APK or IPK as appropriate for the branch.
 
 ## Repository layout
 

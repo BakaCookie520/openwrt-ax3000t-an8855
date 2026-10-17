@@ -506,3 +506,29 @@ cd openwrt-ax3000t
 - [router-state.md](../reference/router-state.md) — Device partition/UBI/firmware state
 - OpenWrt Build System: https://openwrt.org/docs/guide-developer/build-system/start
 - AX3000T Forum: https://forum.openwrt.org/t/openwrt-support-for-router-home/180490
+
+
+## Nikki/ttyd and dual-image build (2026-10-17)
+
+The shared feed preparation step refreshes official Nikki `main` on every build,
+selects the feed's stable Mihomo provider, and records the actual source commit.
+Both local setup and the main/24.10/stable workflows use the same profiles and
+builder. Do not install a prebuilt local Nikki archive during image creation.
+
+The full profile preinstalls Nikki, stable Mihomo, Chinese LuCI support, ttyd and
+its LuCI interface, Tailscale and all required kernel modules. The recovery profile
+switches Nikki/Mihomo/yq/Tailscale userspace to package-only (`m`), leaving kernel
+selections intact. Build full first, preserve its sysupgrade/config/manifest and
+package archive, then build recovery. Refuse publication if kernel ABI differs,
+modules are missing, recovery contains the heavy services, or the recovery FIT
+exceeds 26 MiB. Do not weaken the guard to make a build pass.
+
+Artifacts use `full-` and `recovery-` prefixes to prevent accidental mixing.
+The original full `.config` is restored on all exits. Packages and indexes are
+archived before the recovery pass, so kernel module dependencies match full.
+No build keys other than public `*.pub` files are exported. See
+[ADR: dual images](../adr/0001-preinstalled-nikki-dual-images.md).
+
+Offline validation: `bash scripts/tests/test-nikki-build.sh`, plus the existing
+repository, board-backup and first-boot regression checks. Full cross compilation
+runs in Actions; local mock tests do not establish boot or proxy correctness.

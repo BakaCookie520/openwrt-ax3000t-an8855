@@ -134,22 +134,8 @@ jobs:
           rm -f target/linux/mediatek/filogic/base-files/etc/board.d/02_network.orig
           bash "${SCRIPT_DIR}/check-board-scripts.sh" "$OPENWRT_DIR"
 
-      - name: Add OpenClash feed
-        run: |
-          cd "$OPENWRT_DIR"
-          if [ ! -f feeds.conf ]; then
-            cp feeds.conf.default feeds.conf
-          fi
-          if ! grep -q "OpenClash" feeds.conf; then
-            printf '# OpenClash (Clash/Mihomo 客户端)\nsrc-git openclash %s\n' "${OPENCLASH_URL}" >> feeds.conf
-            echo "Added OpenClash feed"
-          fi
-
-      - name: Update and install feeds
-        run: |
-          cd "$OPENWRT_DIR"
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
+      - name: Refresh OpenClash and latest Nikki sources
+        run: bash "${SCRIPT_DIR}/prepare-feeds.sh" "$OPENWRT_DIR"
 
       - name: Generate defconfig
         run: |
@@ -264,59 +250,16 @@ jobs:
             sed -i "/^CONFIG_$s=/d; /^# CONFIG_${s} is not set\$/d" .config
           done
           # Generate .config seed from script
-          bash "${SCRIPT_DIR}/generate-config-seed.sh"
-          cat .config.seed >> .config
-          rm .config.seed
-          make defconfig
+          bash "${SCRIPT_DIR}/apply-build-profile.sh" "$OPENWRT_DIR" full
 
       - name: Inject first-boot defaults
         run: |
           bash "${SCRIPT_DIR}/inject-firstboot-defaults.sh" "$OPENWRT_DIR"
 
-      - name: Build firmware
+      - name: Build and validate full firmware and recovery images
         run: |
-          cd "$OPENWRT_DIR"
-          bash "${SCRIPT_DIR}/check-board-scripts.sh" "$OPENWRT_DIR"
-          make -j$(nproc) V=s 2>&1 | tee build.log
-
-      - name: Validate image size
-        run: |
-          bash "${SCRIPT_DIR}/check-board-scripts.sh" "$OPENWRT_DIR"
-          TARGET_DIR="$OPENWRT_DIR/bin/targets/mediatek/filogic"
-          STRICT=1 bash "${SCRIPT_DIR}/check-image-size.sh" "$TARGET_DIR"
-
-      - name: Build OpenClash APK
-        run: |
-          cd "$OPENWRT_DIR"
-          make package/feeds/openclash/luci-app-openclash/compile V=s 2>&1 | tee -a build.log
-          APK_PATH=$(find "$OPENWRT_DIR/bin/packages" -type f -name 'luci-app-openclash*.apk' -print -quit)
-          if [ -z "$APK_PATH" ]; then
-            echo "❌ OpenClash APK not generated"
-            find "$OPENWRT_DIR/bin/packages" -type f -iname '*openclash*.apk' -print || true
-            exit 1
-          fi
-          echo "OPENCLASH_APK=$APK_PATH" >> "$GITHUB_ENV"
-          echo "✅ OpenClash APK generated:"
-          ls -lh "$APK_PATH"
-
-      - name: Collect artifacts
-        run: |
-          TARGET_DIR="$OPENWRT_DIR/bin/targets/mediatek/filogic"
-          ARTIFACT_DIR="${{ runner.temp }}/artifacts-${{ matrix.artifact_prefix }}"
-          mkdir -p "$ARTIFACT_DIR"
-          # Firmware images
-          cp "$TARGET_DIR"/*-initramfs-factory.ubi "$ARTIFACT_DIR"/ 2>/dev/null || true
-          cp "$TARGET_DIR"/*-squashfs-sysupgrade.bin "$ARTIFACT_DIR"/ 2>/dev/null || true
-          # OpenClash APK (the package directory varies by OpenWrt feed/branch)
-          if [ -n "${OPENCLASH_APK:-}" ] && [ -f "$OPENCLASH_APK" ]; then
-            cp "$OPENCLASH_APK" "$ARTIFACT_DIR"/
-          else
-            echo "❌ OpenClash APK path is missing"
-            exit 1
-          fi
-          # SHA256 sums
-          (cd "$ARTIFACT_DIR" && sha256sum * > SHA256SUMS.txt 2>/dev/null || true)
-          echo "ARTIFACT_DIR=$ARTIFACT_DIR" >> $GITHUB_ENV
+          bash "${SCRIPT_DIR}/build-firmware.sh" "$OPENWRT_DIR"
+          echo "ARTIFACT_DIR=$OPENWRT_DIR/bin/ax3000t-artifacts" >> "$GITHUB_ENV"
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v7

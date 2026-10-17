@@ -47,9 +47,14 @@
   },
   "github": {
     "assets": [
-      "release-assets/*-initramfs-factory.ubi",
-      "release-assets/*-squashfs-sysupgrade.bin",
-      "release-assets/luci-app-openclash_*.apk",
+      "release-assets/full-*-squashfs-sysupgrade.bin",
+      "release-assets/recovery-*-initramfs*",
+      "release-assets/packages.tar.gz",
+      "release-assets/*.manifest",
+      "release-assets/*.config",
+      "release-assets/*.buildinfo",
+      "release-assets/*.pub",
+      "release-assets/BUILD-INFO.txt",
       "release-assets/SHA256SUMS.txt"
     ],
     "successComment": false,
@@ -58,7 +63,6 @@
     "addReleases": "bottom"
   },
   "git": {
-    "pushRepo": "https://github.com/HughZadora/openwrt-ax3000t-an8855.git",
     "tagFormat": "v${version}"
   }
 }

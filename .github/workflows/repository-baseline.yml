@@ -27,3 +27,5 @@ jobs:
         run: bash scripts/tests/test-firstboot-defaults.sh
       - name: Check board script backup safety
         run: bash scripts/tests/test-board-script-backups.sh
+      - name: Check Nikki profiles and dual-image safety
+        run: bash scripts/tests/test-nikki-build.sh
