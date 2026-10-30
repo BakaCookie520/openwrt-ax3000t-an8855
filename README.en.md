@@ -55,7 +55,7 @@ verify the exact hardware before proceeding.
 
 | Build | Source branch/release | Target handling |
 | --- | --- | --- |
-| Mainline snapshot | `main` | Applies the repository AN8855 patch set and locks to `patches/VERIFIED_COMMIT`. |
+| Mainline snapshot | Latest `main` | Fetches the latest mainline commit and strictly applies the repository AN8855 patch set. |
 | Latest stable release | `stable-latest` | Resolves the highest non-prerelease OpenWrt release tag at build time and applies the repository AN8855 patch set. |
 
 The build includes Tailscale, LuCI, `luci-compat`, networking and diagnostic
@@ -66,6 +66,17 @@ incomplete upgrade handlers, or missing NFC/I2C prerequisites.
 GitHub Actions builds only the patched mainline snapshot. The stable
 variant runs in a separate workflow, is resolved dynamically, and is therefore
 not pinned to a specific release tag.
+
+Mainline Actions runs daily at 02:00 UTC (10:00 Asia/Shanghai; scheduling can be
+delayed), as well as on push/PR and manual dispatch. Each build uses the source
+revision resolved at startup, never a moving checkout during compilation.
+`patches/VERIFIED_COMMIT` is historical only, not a pin or fallback. The actual
+source SHA is recorded in `BUILD-INFO.txt`. Patches allow line offsets but no
+fuzz; incompatible context or failed single-UBI/upgrade/NFC gates stops the build.
+Local setup also refreshes main: if upstream advanced and a reused source tree
+has tracked edits (including previously applied board patches), preserve those
+edits and use a clean checkout. Setup never force-overwrites edits or silently
+builds stale main.
 
 ## Quick start
 
