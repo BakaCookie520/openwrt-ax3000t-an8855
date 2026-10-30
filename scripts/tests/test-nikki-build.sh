@@ -104,7 +104,7 @@ grep -q full-image-with-mihomo "$WORK/success-out"/full-*-sysupgrade.bin
 grep -q safe-recovery "$WORK/success-out"/recovery-*-factory.ubi
 grep -qx CONFIG_PACKAGE_nikki=y "$WORK/success/.config"
 [ "$(find "$WORK/success-out" -name '*initramfs*' | wc -l)" -eq 2 ]
-tar -tzf "$WORK/success-out/packages.tar.gz" | grep -q kmod-dummy
+tar -tzf "$WORK/success-out/packages.tar.gz" | grep kmod-dummy >/dev/null
 (cd "$WORK/success-out"; sha256sum -c SHA256SUMS.txt)
 echo "ok: full image survives recovery pass, matching packages exported, full config restored"
 

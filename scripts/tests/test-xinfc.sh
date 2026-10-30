@@ -5,11 +5,17 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 PACKAGE="$ROOT/packages/luci-app-xinfc"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
+require_ipk_writer() {
+    # Drain the listing; grep -q can SIGPIPE GNU tar under set -o pipefail.
+    tar -tzf - | grep -x './usr/sbin/xinfc-wsc' >/dev/null
+}
 (cd "$PACKAGE"; sha256sum -c SHA256SUMS)
-python3 - "$PACKAGE" <<'PY'
+python3 - "$PACKAGE" "$WORK" <<'PY'
+import io
 import json
 import struct
 import sys
+import tarfile
 from pathlib import Path
 
 root = Path(sys.argv[1]) / "files"
@@ -24,7 +30,25 @@ for path in root.rglob("*.json"):
     json.loads(path.read_text())
 assert (root / "lib/upgrade/keep.d/xinfc").read_text().strip() == "/etc/xinfc/"
 print("ok: original payload hashes, static ARM64 ELF, JSON and backup preservation")
+# Force the listing to exceed pipe buffers, with the required entry first.
+# This catches grep -q closing the tar pipe before the producer has finished.
+with tarfile.open(Path(sys.argv[2]) / "listing-regression.tar.gz", "w:gz") as archive:
+    for name in ["./usr/sbin/xinfc-wsc", *[
+        f"./usr/share/listing-fixture/{index:05d}-" + "x" * 90
+        for index in range(3000)
+    ]]:
+        entry = tarfile.TarInfo(name)
+        entry.size = 0
+        archive.addfile(entry, io.BytesIO())
+with tarfile.open(Path(sys.argv[2]) / "missing-writer.tar.gz", "w:gz") as archive:
+    entry = tarfile.TarInfo("./usr/sbin/not-the-required-writer")
+    archive.addfile(entry, io.BytesIO())
 PY
+require_ipk_writer < "$WORK/listing-regression.tar.gz"
+if require_ipk_writer < "$WORK/missing-writer.tar.gz"; then
+    echo "FAIL: IPK listing accepted a missing NFC writer"; exit 1
+fi
+echo "ok: IPK listing validation drains large producer output under pipefail"
 
 mkdir -p "$WORK/sdk/include"
 : > "$WORK/sdk/rules.mk"
@@ -112,6 +136,6 @@ if command -v ar >/dev/null; then
     tar -czf "$WORK/ipk/control.tar.gz" -C "$WORK" control preinst postinst postrm
     tar -czf "$WORK/ipk/data.tar.gz" -C "$WORK/root" .
     (cd "$WORK/ipk"; ar cr "$WORK/xinfc.ipk" debian-binary control.tar.gz data.tar.gz)
-    ar p "$WORK/xinfc.ipk" data.tar.gz | tar -tzf - | grep -qx './usr/sbin/xinfc-wsc'
+    ar p "$WORK/xinfc.ipk" data.tar.gz | require_ipk_writer
     echo "ok: IPK container smoke test includes the same static writer and package hooks"
 fi
