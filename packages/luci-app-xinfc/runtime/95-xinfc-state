@@ -1,0 +1,9 @@
+#!/bin/sh
+# Only initialize private backup storage. Never read/write the NFC chip here.
+[ -z "${IPKG_INSTROOT:-}" ] || exit 0
+umask 077
+if [ ! -e /etc/xinfc ] && [ ! -L /etc/xinfc ]; then
+	mkdir -m 700 /etc/xinfc || exit 1
+fi
+[ ! -L /etc/xinfc ] && [ -d /etc/xinfc ] &&
+	[ "$(stat -c '%u:%a' /etc/xinfc)" = '0:700' ]

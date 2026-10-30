@@ -1,0 +1,13 @@
+{
+  "admin/services/xinfc": {
+    "title": "AX3000T NFC",
+    "order": 65,
+    "action": {
+      "type": "view",
+      "path": "xinfc"
+    },
+    "depends": {
+      "acl": ["luci-app-xinfc"]
+    }
+  }
+}

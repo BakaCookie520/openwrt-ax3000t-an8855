@@ -17,6 +17,9 @@ cat > .config.seed <<CONFIG_EOF
 CONFIG_TARGET_mediatek=y
 CONFIG_TARGET_mediatek_filogic=y
 CONFIG_TARGET_mediatek_filogic_DEVICE_xiaomi_mi-router-ax3000t-an8855=y
+# CONFIG_TARGET_mediatek_filogic_DEVICE_xiaomi_mi-router-ax3000t is not set
+# CONFIG_TARGET_mediatek_filogic_DEVICE_xiaomi_mi-router-ax3000t-ubootmod is not set
+# CONFIG_TARGET_MULTI_PROFILE is not set
 
 CONFIG_VERSIONOPT=y
 CONFIG_VERSION_REPO="${VERSION_REPO}"
@@ -30,9 +33,15 @@ CONFIG_LUCI_LANG_zh_Hans=y
 
 CONFIG_PACKAGE_luci-compat=y
 CONFIG_PACKAGE_luci-lua-runtime=y
-# Build OpenClash as a standalone APK, but do not include it in the firmware image.
-CONFIG_PACKAGE_luci-app-openclash=m
 CONFIG_PACKAGE_luci-app-nlbwmon=y
+
+CONFIG_PACKAGE_luci-theme-argon=${APP_STATE}
+CONFIG_PACKAGE_luci-i18n-argon-config-zh-cn=${APP_STATE}
+# Settings are integrated in the pinned theme, not the obsolete separate app.
+# CONFIG_PACKAGE_luci-app-argon-config is not set
+CONFIG_PACKAGE_luci-app-xinfc=${APP_STATE}
+CONFIG_PACKAGE_kmod-i2c-core=y
+CONFIG_PACKAGE_flock=y
 
 # Latest Nikki feed source; stable Mihomo provider, never mihomo-alpha.
 CONFIG_PACKAGE_nikki=${APP_STATE}

@@ -1,6 +1,6 @@
 # Project State
 
-> **Date**: 2026-08-21
+> **Date**: 2026-10-30
 > **Author**: Agent (auto-maintained per AGENTS.md)
 > **Scope**: openwrt-ax3000t-an8855
 > **Purpose**: Record Agent knowledge state verification results and next steps
@@ -11,7 +11,7 @@
 - Build entry: `setup.sh` (one-command build)
 - Dev commands: `bash setup.sh` / `bash setup.sh build`
 - Build command: `make -j$(nproc) V=s` (in openwrt-ax3000t/ directory)
-- Test command: No standard test suite; relies on hardware flash verification
+- Test command: `bash scripts/repository-check` and `scripts/tests/test-*.sh`; cross-build/hardware validation remains separate
 - Documentation entry: `README.md`, `README.zh.md`, `docs/development/guide.md`, `docs/reference/router-state.md`, `docs/reports/build-experience.md`, `docs/operations/home-router.md`
 - Agent rules entry: Global `/home/hugh/agent-config/AGENTS.md`
 - Current working directory: `/home/hugh/Projects/openwrt-ax3000t-an8855/`
@@ -22,9 +22,9 @@
 |--------|------|----------------|------------------|------------|--------------|
 | Build script | `setup.sh` | Clone OpenWrt main, apply patches, configure feeds, generate defconfig | git, patch, make | High (drift lock) | 2026-08-18 |
 | AN8855 patches | `patches/` | Single UBI target rebuild patches, VERIFIED_COMMIT lock | OpenWrt main DTS | Critical (boot layout) | 2026-08-14 |
+| UI/NFC packages | `scripts/prepare-feeds.sh`, `packages/luci-app-xinfc/` | Pinned Chinese Argon and offline-safe imported xinfc | Nikki/Argon feeds, native OpenWrt packaging | Medium | 2026-10-30 |
 | Documentation | `README.md`, `README.zh.md`, `docs/development/guide.md`, `docs/reference/router-state.md`, `docs/reports/build-experience.md`, `docs/operations/home-router.md` | Build guide, device state, troubleshooting archive | None | Medium | 2026-08-21 |
 | Curated kmod set | `setup.sh` defconfig | Kernel module selection, controls initramfs size < 26MB | OpenWrt kmod | High (size limit) | 2026-08-14 |
-| OpenClash integration | `setup.sh` separate compile | Compile as APK not in firmware, avoids size limit | OpenClash feed | Medium | 2026-08-15 |
 | CI/CD Pipeline | `.github/workflows/ci.yml`, `.github/workflows/release.yml` | Automated builds, scheduled, multi-branch, semantic-release, VERIFIED_COMMIT auto-update | GitHub Actions, semantic-release | Medium | 2026-08-21 |
 
 ## Verification Commands

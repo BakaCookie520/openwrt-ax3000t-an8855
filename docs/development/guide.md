@@ -54,7 +54,7 @@ go 1.22.0
 ### What `setup.sh` Does
 
 ```bash
-# Step 1: Clone OpenWrt main (or --branch)
+# Step 1: Clone the fixed OpenWrt main source branch
 git clone --depth 1 --branch main https://git.openwrt.org/openwrt/openwrt.git openwrt-ax3000t
 
 # Step 2: Lock to verified commit (main branch only)
@@ -66,15 +66,49 @@ git clone --depth 1 --branch main https://git.openwrt.org/openwrt/openwrt.git op
 # patches/mt7981b-xiaomi-mi-router-ax3000t-an8855.dts → single UBI DTS
 # Dry-run validation before/after application
 
-# Step 4: Add OpenClash feed
-echo "src-git openclash https://github.com/vernesong/OpenClash.git" >> feeds.conf
-
-# Step 5: Update & install feeds
-./scripts/feeds update -a && ./scripts/feeds install -a
+# Step 4: Refresh Nikki, pinned Argon, and local xinfc packages
+bash ../scripts/prepare-feeds.sh "$PWD"
+# feeds.conf is regenerated from feeds.conf.default; put custom upstream feeds there.
 
 # Step 6: Generate defconfig (an8855 target + Tailscale + curated kmods + USTC mirror)
 make defconfig
 ```
+
+### Target safety
+
+All build entry points run `scripts/check-an8855.py --source-only` before feed
+downloads and the full guard after `defconfig`. The target must exist in the
+selected mainline/stable source. Missing or incompatible sources fail rather than
+building stock images. Local setup does not accept source-branch overrides.
+
+### Argon and xinfc
+
+`scripts/prepare-feeds.sh` refreshes Nikki, pins Argon with `scripts/argon.commit`,
+and installs the repository's `packages/` feed. The standalone Argon checkout
+lives in the managed `package/luci-theme-argon` directory, not a feed root. `feeds.conf` is managed output;
+put additional upstream feeds in `feeds.conf.default`. Argon includes its own
+settings interface; select `luci-i18n-argon-config-zh-cn` for Simplified Chinese.
+`scripts/configure-argon.sh` changes image defaults per profile and removes the
+runtime write that would override a retained theme choice.
+
+The xinfc original APK and its six-file payload are in `packages/luci-app-xinfc/`.
+`SHA256SUMS` verifies the archive and unchanged payload before packaging; the
+writer is static ARM64 and must not be stripped. Version 1.0.1-r2 adapts install
+hooks for offline assembly and uses OpenWrt's native APK/IPK package machinery.
+Original scripts and metadata are retained in `source/original.adbdump`.
+No first-boot hook programs NFC. Resolve GPL corresponding-source availability
+before publicly redistributing the supplied binary.
+
+Run the repository baseline and all offline contracts:
+
+```sh
+bash scripts/repository-check
+for test in scripts/tests/test-*.sh; do bash "$test" || exit; done
+```
+
+Optional apk-tools/binutils enable additional APK/IPK container smoke tests.
+These tests do not perform an SDK cross-build or verify NFC hardware. See
+`docs/adr/0002-argon-xinfc-and-target-guards.md` for provenance and limitations.
 
 ### Key Patch Details
 
@@ -130,16 +164,12 @@ make menuconfig
 # Rebuild: make -j$(nproc) V=s
 ```
 
-### Switching to OpenWrt 24.10 Stable
+### Supported source builds
 
-```bash
-# 24.10 has official AN8855 target; no patches needed
-bash setup.sh --branch openwrt-24.10 build
-```
-
-**Behavior difference**:
-- `main`: clones main + locks `VERIFIED_COMMIT` + applies AN8855 patches
-- `openwrt-24.10`: clones 24.10 branch, **skips commit lock & patches** (official target exists)
+Local `bash setup.sh [build]` uses only mainline with `VERIFIED_COMMIT` and the
+AN8855 patches. The separate stable workflow resolves the latest formal release
+and applies the same safety gates. There is no fixed older-release build path
+or local `--branch` override.
 
 ### Custom Feed / Package
 
@@ -171,7 +201,6 @@ src-git custom https://github.com/user/repo.git
 | Symptom | Diagnosis | Fix |
 |---------|-----------|-----|
 | Sysupgrade → bootloop to recovery | Wrong target (dual-partition) | Must use `xiaomi_mi-router-ax3000t-an8855` single-UBI |
-| OpenClash installed but no LuCI menu | Missing Lua runtime (LuCI 26) | `apk add luci-compat && /etc/init.d/uhttpd restart` |
 | `fw_printenv` missing | `uboot-envtools` not configured | Not needed; stock U-Boot managed by upgrade scripts |
 | Tailscale `logged out` | WAN down → no control plane | Restore WAN; `tailscaled` auto-reconnects via `procd respawn` |
 
@@ -328,7 +357,6 @@ Use: initramfs-factory.ubi → mtd write ubi → reboot → sysupgrade -n squash
 
 - **Kernel modules are compile-time only** — cannot `apk add kmod-*` post-flash
 - **Initramfs size is hard constraint** — every kmod counts; audit with `check-image-size.sh`
-- **OpenClash + LuCI 26** — requires `luci-compat` (Lua runtime removed in LuCI 26)
 - **PATCH_DIR collision** — never export `PATCH_DIR`/`FILES_DIR`/`KDIR` in build scripts
 
 ---
@@ -378,7 +406,6 @@ Example: `fix(patches): correct AN8855 MAC address extraction`
 | Decision | Rationale | Reference |
 |----------|-----------|-----------|
 | Single UBI target on mainline | Stock U-Boot + AN8855 only boots single UBI | `docs/reference/router-state.md` §0 |
-| OpenClash as APK not in firmware | initramfs >26MB with OpenClash → U-Boot load fail | `README.md` FAQ |
 | Curated kmod set | 179 kmods → 27.9MB initramfs (fail); curated → ~25MB | `docs/reports/build-experience.md` §6.3 |
 | USTC mirror default | Domestic download 28500x faster | `docs/reports/build-experience.md` §4.2 |
 | `VERIFIED_COMMIT` lock | Prevent mainline drift breaking patches | `setup.sh` §75-83 |
@@ -421,15 +448,14 @@ This project uses GitHub Actions for continuous integration and semantic-release
 
 | Workflow | File | Triggers | Purpose |
 |----------|------|----------|---------|
-| **CI Build** | `.github/workflows/ci.yml` | Push/PR to `master`/`openwrt-24.10`, manual dispatch | Build the two snapshot variants, validate image size, upload firmware/APK artifacts |
-| **Stable Build** | `.github/workflows/stable-latest.yml` | Monthly cron (02:00 UTC), manual dispatch | Resolve the latest stable OpenWrt release and build firmware + OpenClash APK |
+| **CI Build** | `.github/workflows/ci.yml` | Push/PR to `master`, manual dispatch | Build the patched mainline snapshot, validate image size, upload firmware/APK artifacts |
+| **Stable Build** | `.github/workflows/stable-latest.yml` | Monthly cron (02:00 UTC), manual dispatch | Resolve the latest stable OpenWrt release and build validated full/recovery firmware |
 | **Release** | `.github/workflows/release.yml` | Push to `master` (after CI passes) | semantic-release: analyze commits → version → tag → GitHub Release with artifacts |
 
 ### CI Build Details
 
-**Matrix builds**:
-- `master` branch: Full pipeline with VERIFIED_COMMIT lock + AN8855 patches
-- `openwrt-24.10` branch: Build without VERIFIED_COMMIT lock (official AN8855 target exists)
+**Mainline build**: OpenWrt `main`, with VERIFIED_COMMIT lock + AN8855 patches.
+The repository branch remains `master`; the single build no longer uses a matrix.
 
 The `stable-latest` build is intentionally outside the PR/push matrix so a
 slow full release build cannot delay normal pull-request feedback. Both
@@ -439,7 +465,6 @@ the ccache directory.
 **Artifacts** (90-day retention):
 - `*-initramfs-factory.ubi` — Flash via recovery/mtd
 - `*-squashfs-sysupgrade.bin` — Sysupgrade from running OpenWrt
-- `luci-app-openclash-*.apk` — Install via `apk add`
 - `SHA256SUMS.txt` — Checksums for verification
 
 **Image size gate**: `scripts/check-image-size.sh` runs with `STRICT=1` — build fails if initramfs > 26MB.
@@ -512,7 +537,7 @@ cd openwrt-ax3000t
 
 The shared feed preparation step refreshes official Nikki `main` on every build,
 selects the feed's stable Mihomo provider, and records the actual source commit.
-Both local setup and the main/24.10/stable workflows use the same profiles and
+Both local setup and the main/stable workflows use the same profiles and
 builder. Do not install a prebuilt local Nikki archive during image creation.
 
 The full profile preinstalls Nikki, stable Mihomo, Chinese LuCI support, ttyd and

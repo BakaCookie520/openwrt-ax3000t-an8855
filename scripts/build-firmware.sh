@@ -17,6 +17,9 @@ OUT="$(cd "$OUT" && pwd)"
 WORK="$(mktemp -d)"
 restore_config() {
     [ ! -f "$WORK/full.config" ] || cp "$WORK/full.config" "$TREE/.config"
+    if [ -f "$WORK/full.config" ]; then
+        bash "$ROOT/scripts/configure-argon.sh" "$TREE" full
+    fi
     rm -rf "$WORK"
 }
 trap restore_config EXIT
@@ -41,19 +44,29 @@ build() {
 }
 
 bash "$ROOT/scripts/check-board-scripts.sh" "$TREE"
+# Do not silently repair a user-selected stock/multi-device image at build time.
+python3 "$ROOT/scripts/check-an8855.py" "$TREE"
 bash "$ROOT/scripts/apply-build-profile.sh" "$TREE" full
 cp "$TREE/.config" "$WORK/full.config"
 build
-# OpenClash remains an optional package, not a second running proxy service.
-(cd "$TREE"; make package/feeds/openclash/luci-app-openclash/compile V=s) \
-    2>&1 | tee -a "$OUT/build.log"
-
 manifest="$(one_file "$TARGET" '*.manifest')"
 for pkg in nikki mihomo-meta luci-app-nikki luci-i18n-nikki-zh-cn \
     ttyd luci-app-ttyd tailscale luci-app-tailscale-community \
+    luci-theme-argon luci-i18n-argon-config-zh-cn luci-app-xinfc \
     kmod-inet-diag kmod-dummy kmod-nft-socket kmod-nft-tproxy kmod-tun; do
     require_package "$manifest" "$pkg"
 done
+# A package name alone does not prove the Chinese catalog/default reached rootfs.
+mapfile -t roots < <(find "$TREE/build_dir" -maxdepth 3 -type d -name root-mediatek)
+[ "${#roots[@]}" -eq 1 ] || { echo "Expected one staged Mediatek rootfs" >&2; exit 1; }
+full_root="${roots[0]}"
+[ -s "$full_root/usr/lib/lua/luci/i18n/argon-config.zh-cn.lmo" ] || {
+    echo "Compiled Argon Simplified Chinese catalog is missing" >&2; exit 1;
+}
+grep -Eq "option[[:space:]]+mediaurlbase[[:space:]]+['\"]?/luci-static/argon" \
+    "$full_root/etc/config/luci" || {
+    echo "Full rootfs does not default to Argon" >&2; exit 1;
+}
 full_kernel="$(awk '$1 == "kernel" { print $3 }' "$manifest")"
 [ -n "$full_kernel" ] || { echo "Missing full-image kernel ABI" >&2; exit 1; }
 image="$(one_file "$TARGET" '*-squashfs-sysupgrade.bin')"
@@ -92,13 +105,21 @@ recovery_kernel="$(awk '$1 == "kernel" { print $3 }' "$manifest")"
     echo "Kernel ABI changed between full and recovery; refusing to publish" >&2
     exit 1
 }
-for pkg in nikki mihomo-meta luci-app-nikki tailscale luci-app-tailscale-community yq; do
+for pkg in nikki mihomo-meta luci-app-nikki tailscale luci-app-tailscale-community yq \
+    luci-theme-argon luci-i18n-argon-config-zh-cn luci-app-xinfc; do
     if grep -Eq "^$pkg[[:space:]]+-[[:space:]]+" "$manifest"; then
         echo "Heavy package leaked into recovery image: $pkg" >&2; exit 1
     fi
 done
 require_package "$manifest" ttyd
 require_package "$manifest" luci-app-ttyd
+grep -Eq "option[[:space:]]+mediaurlbase[[:space:]]+['\"]?/luci-static/bootstrap" \
+    "$full_root/etc/config/luci" || {
+    echo "Recovery rootfs does not default to Bootstrap" >&2; exit 1;
+}
+[ ! -e "$full_root/usr/lib/lua/luci/i18n/argon-config.zh-cn.lmo" ] || {
+    echo "Argon catalog leaked into recovery rootfs" >&2; exit 1;
+}
 STRICT=1 HARD_LIMIT_MB=26 WARN_LIMIT_MB=25 \
     bash "$ROOT/scripts/check-image-size.sh" "$TARGET"
 bash "$ROOT/scripts/check-board-scripts.sh" "$TREE"
@@ -113,10 +134,15 @@ cp "$manifest" "$OUT/recovery.manifest"
 {
     printf 'OpenWrt commit: %s\n' "$(git -C "$TREE" rev-parse HEAD)"
     printf 'Nikki main commit at feed refresh: %s\n' "$(cat "$TREE/nikki-source.commit")"
+    printf 'Argon source commit: %s\n' "$(cat "$TREE/argon-source.commit")"
+    printf 'xinfc original APK SHA256: %s\n' \
+        "$(awk 'NR == 1 { print $1 }' "$ROOT/packages/luci-app-xinfc/SHA256SUMS")"
     printf 'Kernel package/ABI (both images): %s\n' "$full_kernel"
     printf 'Mihomo: stable mihomo-meta selected by the refreshed Nikki feed\n'
-    printf 'full-*-sysupgrade.bin: daily-use firmware with Nikki/Mihomo, Tailscale and ttyd\n'
-    printf 'recovery-*-initramfs*: temporary recovery only; no Nikki/Mihomo or Tailscale\n'
+    printf 'full-*-sysupgrade.bin: Nikki/Mihomo, Tailscale, ttyd, Argon/Chinese and xinfc\n'
+    printf 'recovery-*-initramfs*: no Nikki/Mihomo, Tailscale, Argon or xinfc\n'
+    printf 'Argon is the clean-install default; retained theme/language choices are preserved.\n'
+    printf 'xinfc never programs NFC during installation or first boot.\n'
     printf 'Nikki is disabled until a user configures and enables it.\n'
     printf 'ttyd uses upstream @lan binding and /bin/login; no credentials are embedded.\n'
     printf 'Preserved upgrade configs override defaults; check old ttyd bindings manually.\n'

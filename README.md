@@ -9,7 +9,7 @@
 为搭载 AN8855 交换芯片的小米 AX3000T 构建可复现的 OpenWrt 固件。
 项目使用适配原厂 U-Boot 的单 UBI 固件布局，生成两套产物：完整 sysupgrade
 预装 Nikki、稳定版 Mihomo、中文管理界面、ttyd 和 Tailscale；精简 initramfs
-用于恢复，严格保持在 26 MiB 内。OpenClash 仍作为可选独立软件包发布。
+用于恢复，严格保持在 26 MiB 内。完整固件另含 Argon 主题、主题设置中文翻译及 xinfc NFC 管理。
 
 ## 重要警告
 
@@ -21,17 +21,16 @@ AN8855 目标使用单 UBI 布局；标准双分区目标可能导致设备进�
 
 | 构建类型 | 源码分支／版本 | 目标处理方式 |
 | --- | --- | --- |
-| 主线开发快照 | `master` | 应用本仓库 AN8855 补丁，并锁定到 `patches/VERIFIED_COMMIT`。 |
-| OpenWrt 24.10 开发快照 | `openwrt-24.10` | 使用上游 AN8855 目标，不应用本仓库补丁。 |
+| 主线开发快照 | `main` | 应用本仓库 AN8855 补丁，并锁定到 `patches/VERIFIED_COMMIT`。 |
 | 最新正式稳定版 | `stable-latest` | 构建时动态选择版本号最高的非预发布 OpenWrt 标签，并应用本仓库 AN8855 补丁。 |
 
-完整固件包含 Nikki/Mihomo、ttyd、Tailscale、LuCI、`luci-compat`、网络与诊断
+完整固件包含 Nikki/Mihomo、ttyd、Tailscale、中文 Argon、xinfc、LuCI、`luci-compat`、网络与诊断
 工具、WireGuard、QoS、zram，以及 Nikki 所需的匹配内核模块。
 每次构建通过官方 Nikki feed 的 `main` 分支更新源码，不使用本地下载的旧安装包；
 Mihomo 使用该 feed 定义的稳定版本，而非 alpha。实际 Nikki 提交号记录在产物中。
-精简恢复镜像不包含 Nikki/Mihomo、yq 或 Tailscale，但保留 LuCI 和 ttyd。
+精简恢复镜像不包含 Nikki/Mihomo、yq、Tailscale、Argon 或 xinfc，但保留 LuCI 和 ttyd。
 
-GitHub Actions 并行构建两个开发快照版本。稳定版使用独立工作流，
+GitHub Actions 仅保留带 AN8855 补丁的主线开发快照构建。稳定版使用独立工作流，
 每次动态解析最新正式版本，不固定到某个发布标签。
 
 ## 快速开始
@@ -57,12 +56,6 @@ bash setup.sh
 bash setup.sh build
 ```
 
-构建 OpenWrt 24.10：
-
-```sh
-bash setup.sh --branch openwrt-24.10 build
-```
-
 首次完整构建可能耗时数小时，并占用较多磁盘空间。
 
 ## 构建产物
@@ -82,8 +75,8 @@ openwrt-ax3000t/bin/ax3000t-artifacts/
 - `full-*-squashfs-sysupgrade.bin`：日常使用的完整预装固件；已有同布局 OpenWrt 可直接升级。
 - `recovery-*-initramfs-factory.ubi`：精简临时恢复系统，不是完整预装版。
 - `recovery-*-initramfs-kernel.bin`／`.itb`：经过 26 MiB 安全检查的恢复 FIT。
-- `packages.tar.gz`：同次构建的软件包与索引，包含 Nikki、OpenClash 及匹配的内核模块。
-  24.10 使用 IPK；采用 apk 的分支使用 APK，不混用包格式。
+- `packages.tar.gz`：同次构建的软件包与索引，包含 Nikki、Argon、xinfc 及匹配的内核模块。
+  使用对应源码的原生 APK/IPK 格式，不混用包格式。
 - `full.manifest`、`recovery.manifest`、对应 `.config` 和 `BUILD-INFO.txt`：包清单、配置与源码提交号。
 - `SHA256SUMS.txt`：校验所有交付文件。
 
@@ -130,8 +123,15 @@ Nikki 预装但默认不启用代理，订阅和节点由用户自行配置。�
 不写入任何账号密码，也不使用免密 root 自动登录。保留配置升级时不会覆盖用户的
 旧 ttyd 配置；若旧接口仍写作 `lan4`，需自行改为 `@lan` 或 `br-lan`。
 
-OpenClash 是可选项，安装包从 `packages.tar.gz` 解压取得；不要同时启用两个透明代理。
-使用与固件一致的 APK/IPK 格式及匹配构建的内核模块，不强制绕过依赖检查。
+新安装默认使用 **Argon**，包含主题设置和简体中文翻译
+（`luci-i18n-argon-config-zh-cn`），无需另装旧的独立主题设置插件。
+保留配置升级时不覆盖已有主题或语言选择；恢复镜像使用 Bootstrap。
+
+**xinfc** 来源为仓库固定保存的 1.0.1-r1 APK，按各分支原生格式重新打包为
+1.0.1-r2；程序载荷保持原样，安装脚本适配离线构建。安装与首次启动不写入 NFC，
+NFC 写入必须由用户主动操作；首次备份保存在 `/etc/xinfc/`，并随配置备份保留。
+原包、提取载荷和 SHA256 在 `packages/luci-app-xinfc/`；构建信息记录来源校验值。
+二进制源码未随原包提供，公开再分发前需另行确认 GPL 对应源码可用性。
 
 ## 仓库结构
 
@@ -141,6 +141,8 @@ setup.sh                             构建入口
 scripts/check-image-size.sh          initramfs 体积检查
 scripts/check-board-scripts.sh       板级脚本备份安全检查
 scripts/generate-config-seed.sh      可复现的软件包／配置种子
+scripts/check-an8855.py              AN8855 布局和 NFC 前置条件校验
+packages/luci-app-xinfc/              固定 APK、原始载荷与原生打包定义
 scripts/inject-firstboot-defaults.sh  新安装的板级默认值
 openwrt-ax3000t/                     忽略提交的 OpenWrt 源码与构建目录
 docs/                                开发与运维参考文档
@@ -155,17 +157,18 @@ docs/                                开发与运维参考文档
 | 完整构建 | `bash setup.sh build` |
 | 从已准备的源码构建双镜像 | `bash scripts/build-firmware.sh openwrt-ax3000t` |
 | 离线测试双镜像安全策略 | `bash scripts/tests/test-nikki-build.sh` |
-| 构建 OpenWrt 24.10 | `bash setup.sh --branch openwrt-24.10 build` |
 | 配置软件包 | `cd openwrt-ax3000t && make menuconfig` |
-| 编译 OpenClash | `cd openwrt-ax3000t && make package/feeds/openclash/luci-app-openclash/compile V=s` |
 | 检查 initramfs 体积 | `scripts/check-image-size.sh openwrt-ax3000t/bin/targets/mediatek/filogic` |
 | 检查板级脚本备份 | `bash scripts/check-board-scripts.sh openwrt-ax3000t` |
 | 仓库基线检查 | `scripts/repository-check` |
 
+本地和 Actions 共用 `scripts/check-an8855.py`：检查选中目标、单 UBI 分区、
+升级处理及 I²C/NFC 声明；缺失或选错时直接失败，不回退到标准双分区目标。
+
 ## GitHub Actions
 
-CI 工作流构建 `master` 和 `openwrt-24.10` 开发快照，
-构建并校验双镜像、编译 OpenClash，并上传固件、配套软件包和构建信息。
+CI 工作流在仓库 `master` 的推送／拉取请求上构建 OpenWrt `main` 开发快照，
+构建并校验 AN8855 双镜像，并上传固件、配套软件包和构建信息。
 独立的 `stable-latest.yml` 工作流对最新 OpenWrt 正式稳定版执行同样的构建。
 两个工作流均缓存下载文件和编译结果；GitHub Actions 产物保留 90 天。
 
@@ -176,7 +179,7 @@ CI 工作流构建 `master` 和 `openwrt-24.10` 开发快照，
 
 - 原厂引导程序要求使用 AN8855 单 UBI 布局。
 - initramfs FIT 镜像不得超过 26 MiB。
-- OpenClash 特意不内置于固件镜像；Nikki/Mihomo 仅完整 sysupgrade 预装。
+- Nikki/Mihomo、Tailscale、Argon 和 xinfc 仅完整 sysupgrade 预装。
 - 标准 AX3000T／MT7531 目标不能与本目标混用。
 - OpenWrt 源码和构建产物属于本地忽略文件，不纳入仓库版本管理。
 

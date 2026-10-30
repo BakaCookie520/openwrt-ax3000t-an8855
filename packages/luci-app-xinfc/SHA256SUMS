@@ -1,0 +1,8 @@
+524cfdaaac1da69adeb39a5fc2ca1bd5b4985ce1dc1c910430e429f2a5352b25  source/luci-app-xinfc-1.0.1-r1-aarch64_cortex-a53.apk
+ae0d56f30140c76bd7395f81ce81f70de0232046f0c0a593e2bc35efa14487c1  files/lib/upgrade/keep.d/xinfc
+5508f047b3b5fbf5398d636fafad7c97c54496a89e8d8a6c9a5150344ca44543  files/usr/libexec/rpcd/luci.xinfc
+79af6e05f45ac4e68de1891292d55ede7f0036074785dadfb23b4a7d573e3a4c  files/usr/sbin/xinfc-wsc
+39c42726e0b241ae0235f0157ba1306837429b127f9838321dced21123b96fe7  files/usr/share/luci/menu.d/luci-app-xinfc.json
+94a5d55dfb86f4e5a8746218782e3c07ac6c6be92555787b5adb1eb2dce56c95  files/usr/share/rpcd/acl.d/luci-app-xinfc.json
+8cbd053f3abfba114927cf2ff353853d946a10b7666ba54011c9001fa6407d59  files/www/luci-static/resources/view/xinfc.js
+0f2c1f20bfca99f1d82926bc81dc21719e0e56766cd5ed9c8f85eafe2471661d  source/original.adbdump

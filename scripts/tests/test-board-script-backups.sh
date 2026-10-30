@@ -81,7 +81,6 @@ awk '
     found { print }
 ' "$ROOT/setup.sh" > "$WORK/local-patch-step"
 fixture "$WORK/local"
-export BRANCH=main
 ( cd "$OPENWRT_DIR"; bash -e "$WORK/local-patch-step" )
 assert_ports
 echo "ok: local offset patch cannot add duplicate ports"

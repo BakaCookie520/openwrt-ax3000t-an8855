@@ -9,7 +9,6 @@ env:
   OPENWRT_DIR: ${{ github.workspace }}/openwrt-ax3000t
   REPO_PATCH_DIR: ${{ github.workspace }}/patches
   SCRIPT_DIR: ${{ github.workspace }}/scripts
-  OPENCLASH_URL: https://github.com/vernesong/OpenClash.git
   CCACHE_DIR: ${{ github.workspace }}/.ccache
 
 jobs:
@@ -127,7 +126,10 @@ jobs:
           rm -f target/linux/mediatek/filogic/base-files/etc/board.d/02_network.orig
           bash "${SCRIPT_DIR}/check-board-scripts.sh" "$OPENWRT_DIR"
 
-      - name: Refresh OpenClash and latest Nikki sources
+      - name: Verify AN8855 single-UBI and NFC sources
+        run: python3 "${SCRIPT_DIR}/check-an8855.py" --source-only "$OPENWRT_DIR"
+
+      - name: Refresh Nikki, pinned Argon and local packages
         run: bash "${SCRIPT_DIR}/prepare-feeds.sh" "$OPENWRT_DIR"
 
       - name: Generate defconfig

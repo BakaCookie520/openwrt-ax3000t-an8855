@@ -9,5 +9,5 @@
 # 置空(仅保留注释)则 setup.sh 跟随 main 最新、不锁定,补丁可能漂移失效。
 #
 # 上次验证:2026-08-15,产物 initramfs-kernel.bin(FIT)= 24.9MB(≤26MB),
-#   initramfs-factory.ubi=27MB / squashfs-sysupgrade.bin=28MB / OpenClash apk 7.8MB
+#   initramfs-factory.ubi=27MB / squashfs-sysupgrade.bin=28MB
 9f3157aa2ad5481de947bbfbba3e2eb065486a26

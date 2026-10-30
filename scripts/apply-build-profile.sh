@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-TREE="${1:?Usage: $0 <openwrt-dir> [full|recovery]}"
+TREE="$(cd "${1:?Usage: $0 <openwrt-dir> [full|recovery]}" && pwd)"
 PROFILE="${2:-full}"
 case "$PROFILE" in full|recovery) ;; *) echo "Unknown profile: $PROFILE" >&2; exit 1 ;; esac
 cd "$TREE"
@@ -29,3 +29,5 @@ awk '
 ' .config.seed .config > "$tmp"
 cat "$tmp" .config.seed > .config
 make defconfig
+bash "$ROOT/scripts/configure-argon.sh" "$TREE" "$PROFILE"
+python3 "$ROOT/scripts/check-an8855.py" "$TREE"

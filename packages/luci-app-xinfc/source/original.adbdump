@@ -1,0 +1,260 @@
+#%SCHEMA: 676B6370
+# ADB block, size: 3460, compat: 0, ver: 0
+info:
+  name: luci-app-xinfc
+  version: 1.0.1-r1
+  hashes: a893caed7f5a4cb1d3a9b75ab67bdd09c752b1e0
+  description: AX3000T NFC management with Argon-style LuCI UI and static writer
+  arch: aarch64_cortex-a53
+  license: GPL-2.0-or-later
+  origin: xinfc
+  build-time: 1791026214
+  installed-size: 409185
+  depends: # 7 items
+    - base-files
+    - busybox
+    - coreutils-stat
+    - jshn
+    - luci-base
+    - rpcd
+    - ubus
+  provides: # 1 items
+    - xinfc=1.0.1-r1
+paths: # 17 items
+  - acl:
+      mode: 0755
+      user: root
+      group: root
+  - name: lib
+    acl:
+      mode: 0755
+      user: root
+      group: root
+  - name: lib/upgrade
+    acl:
+      mode: 0755
+      user: root
+      group: root
+  - name: lib/upgrade/keep.d
+    acl:
+      mode: 0755
+      user: root
+      group: root
+    files: # 1 items
+      - name: xinfc
+        acl:
+          mode: 0644
+          user: root
+          group: root
+        size: 12
+        mtime: 0
+        hash: ae0d56f30140c76bd7395f81ce81f70de0232046f0c0a593e2bc35efa14487c1
+  - name: usr
+    acl:
+      mode: 0755
+      user: root
+      group: root
+  - name: usr/libexec
+    acl:
+      mode: 0755
+      user: root
+      group: root
+  - name: usr/libexec/rpcd
+    acl:
+      mode: 0755
+      user: root
+      group: root
+    files: # 1 items
+      - name: luci.xinfc
+        acl:
+          mode: 0755
+          user: root
+          group: root
+        size: 9230
+        mtime: 0
+        hash: 5508f047b3b5fbf5398d636fafad7c97c54496a89e8d8a6c9a5150344ca44543
+  - name: usr/sbin
+    acl:
+      mode: 0755
+      user: root
+      group: root
+    files: # 1 items
+      - name: xinfc-wsc
+        acl:
+          mode: 0755
+          user: root
+          group: root
+        size: 374624
+        mtime: 0
+        hash: 79af6e05f45ac4e68de1891292d55ede7f0036074785dadfb23b4a7d573e3a4c
+  - name: usr/share
+    acl:
+      mode: 0755
+      user: root
+      group: root
+  - name: usr/share/luci
+    acl:
+      mode: 0755
+      user: root
+      group: root
+  - name: usr/share/luci/menu.d
+    acl:
+      mode: 0755
+      user: root
+      group: root
+    files: # 1 items
+      - name: luci-app-xinfc.json
+        acl:
+          mode: 0644
+          user: root
+          group: root
+        size: 203
+        mtime: 0
+        hash: 39c42726e0b241ae0235f0157ba1306837429b127f9838321dced21123b96fe7
+  - name: usr/share/rpcd
+    acl:
+      mode: 0755
+      user: root
+      group: root
+  - name: usr/share/rpcd/acl.d
+    acl:
+      mode: 0755
+      user: root
+      group: root
+    files: # 1 items
+      - name: luci-app-xinfc.json
+        acl:
+          mode: 0644
+          user: root
+          group: root
+        size: 240
+        mtime: 0
+        hash: 94a5d55dfb86f4e5a8746218782e3c07ac6c6be92555787b5adb1eb2dce56c95
+  - name: www
+    acl:
+      mode: 0755
+      user: root
+      group: root
+  - name: www/luci-static
+    acl:
+      mode: 0755
+      user: root
+      group: root
+  - name: www/luci-static/resources
+    acl:
+      mode: 0755
+      user: root
+      group: root
+  - name: www/luci-static/resources/view
+    acl:
+      mode: 0755
+      user: root
+      group: root
+    files: # 1 items
+      - name: xinfc.js
+        acl:
+          mode: 0644
+          user: root
+          group: root
+        size: 24876
+        mtime: 0
+        hash: 8cbd053f3abfba114927cf2ff353853d946a10b7666ba54011c9001fa6407d59
+scripts:
+  pre-install: |
+    #!/bin/sh
+    # This package is deliberately limited to live AX3000T installations.
+    set -eu
+    fail() { echo "xinfc: $*" >&2; exit 1; }
+    [ "$(id -u)" = 0 ] || fail 'Root required.'
+    COMPATIBLE=/proc/device-tree/compatible
+    NFC_COMPATIBLE=/sys/bus/i2c/devices/0-0057/of_node/compatible
+    [ -r "$COMPATIBLE" ] || fail 'AX3000T device tree not found.'
+    if ! tr '\000' '\n' < "$COMPATIBLE" |
+    	grep -qxE 'xiaomi,mi-router-ax3000t(-ubootmod)?'; then
+    	tr '\000' '\n' < "$COMPATIBLE" |
+    		grep -Fxq 'xiaomi,mi-router-ax3000t-an8855' &&
+    		[ -r "$NFC_COMPATIBLE" ] &&
+    		tr '\000' '\n' < "$NFC_COMPATIBLE" | grep -Fxq nt082c ||
+    		fail 'Only supported AX3000T device trees are permitted.'
+    fi
+    [ -c /dev/i2c-0 ] || fail 'Missing /dev/i2c-0; check firmware I2C support.'
+    [ ! -e /sys/bus/i2c/devices/0-0057/driver ] ||
+    	fail 'NFC chip is already bound to a kernel driver.'
+    [ ! -d /tmp/xinfc/job.lock ] || fail 'An NFC job is active; retry when it finishes.'
+    for dependency in flock jshn ubus stat mktemp; do
+    	command -v "$dependency" >/dev/null || fail "Missing $dependency."
+    done
+    if [ -e /etc/xinfc ] || [ -L /etc/xinfc ]; then
+    	[ ! -L /etc/xinfc ] && [ -d /etc/xinfc ] &&
+    		[ "$(stat -c '%u:%a' /etc/xinfc)" = '0:700' ] ||
+    		fail 'Existing /etc/xinfc must be a root-owned directory with mode 0700.'
+    fi
+    # No chip access, wireless changes, backup deletion, or firmware changes.
+  post-install: |
+    #!/bin/sh
+    set -eu
+    umask 077
+    if [ ! -e /etc/xinfc ] && [ ! -L /etc/xinfc ]; then
+    	mkdir -m 700 /etc/xinfc
+    fi
+    [ ! -L /etc/xinfc ] && [ -d /etc/xinfc ] &&
+    	[ "$(stat -c '%u:%a' /etc/xinfc)" = '0:700' ] || exit 1
+    rm -f /tmp/luci-indexcache /tmp/luci-indexcache.*
+    /etc/init.d/rpcd restart
+    # Preserve any existing first NFC backup. Installation never programs the chip.
+    echo 'xinfc installed. Re-login to LuCI: Services -> AX3000T NFC.'
+  post-deinstall: |
+    #!/bin/sh
+    rm -f /tmp/luci-indexcache /tmp/luci-indexcache.*
+    /etc/init.d/rpcd restart
+    # /etc/xinfc is intentionally not package-owned and is never deleted.
+    exit 0
+  pre-upgrade: |
+    #!/bin/sh
+    # This package is deliberately limited to live AX3000T installations.
+    set -eu
+    fail() { echo "xinfc: $*" >&2; exit 1; }
+    [ "$(id -u)" = 0 ] || fail 'Root required.'
+    COMPATIBLE=/proc/device-tree/compatible
+    NFC_COMPATIBLE=/sys/bus/i2c/devices/0-0057/of_node/compatible
+    [ -r "$COMPATIBLE" ] || fail 'AX3000T device tree not found.'
+    if ! tr '\000' '\n' < "$COMPATIBLE" |
+    	grep -qxE 'xiaomi,mi-router-ax3000t(-ubootmod)?'; then
+    	tr '\000' '\n' < "$COMPATIBLE" |
+    		grep -Fxq 'xiaomi,mi-router-ax3000t-an8855' &&
+    		[ -r "$NFC_COMPATIBLE" ] &&
+    		tr '\000' '\n' < "$NFC_COMPATIBLE" | grep -Fxq nt082c ||
+    		fail 'Only supported AX3000T device trees are permitted.'
+    fi
+    [ -c /dev/i2c-0 ] || fail 'Missing /dev/i2c-0; check firmware I2C support.'
+    [ ! -e /sys/bus/i2c/devices/0-0057/driver ] ||
+    	fail 'NFC chip is already bound to a kernel driver.'
+    [ ! -d /tmp/xinfc/job.lock ] || fail 'An NFC job is active; retry when it finishes.'
+    for dependency in flock jshn ubus stat mktemp; do
+    	command -v "$dependency" >/dev/null || fail "Missing $dependency."
+    done
+    if [ -e /etc/xinfc ] || [ -L /etc/xinfc ]; then
+    	[ ! -L /etc/xinfc ] && [ -d /etc/xinfc ] &&
+    		[ "$(stat -c '%u:%a' /etc/xinfc)" = '0:700' ] ||
+    		fail 'Existing /etc/xinfc must be a root-owned directory with mode 0700.'
+    fi
+    # No chip access, wireless changes, backup deletion, or firmware changes.
+  post-upgrade: |
+    #!/bin/sh
+    set -eu
+    umask 077
+    if [ ! -e /etc/xinfc ] && [ ! -L /etc/xinfc ]; then
+    	mkdir -m 700 /etc/xinfc
+    fi
+    [ ! -L /etc/xinfc ] && [ -d /etc/xinfc ] &&
+    	[ "$(stat -c '%u:%a' /etc/xinfc)" = '0:700' ] || exit 1
+    rm -f /tmp/luci-indexcache /tmp/luci-indexcache.*
+    /etc/init.d/rpcd restart
+    # Preserve any existing first NFC backup. Installation never programs the chip.
+    echo 'xinfc installed. Re-login to LuCI: Services -> AX3000T NFC.'
+# data block, size: 20
+# data block, size: 9238
+# data block, size: 374632
+# data block, size: 211
+# data block, size: 248
+# data block, size: 24884
