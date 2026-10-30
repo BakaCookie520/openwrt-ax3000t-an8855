@@ -75,6 +75,8 @@ for file in lib/upgrade/keep.d/xinfc usr/share/luci/menu.d/luci-app-xinfc.json \
     [ "$(stat -c %a "$WORK/root/$file")" = 644 ]
     cmp "$WORK/root/$file" "$PACKAGE/files/$file"
 done
+cmp "$WORK/root/www/luci-static/resources/xinfc/wireless.js" "$PACKAGE/runtime/wireless.js"
+[ "$(stat -c %a "$WORK/root/www/luci-static/resources/xinfc/wireless.js")" = 644 ]
 cmp "$WORK/root/usr/sbin/xinfc-wsc" "$PACKAGE/files/usr/sbin/xinfc-wsc"
 cmp "$WORK/root/usr/libexec/rpcd/luci.xinfc" "$PACKAGE/files/usr/libexec/rpcd/luci.xinfc"
 
@@ -120,7 +122,7 @@ echo "ok: first boot creates private storage, preserves the first backup and rej
 
 # Optional native APK smoke test. The normal OpenWrt recipe handles both formats.
 if command -v apk >/dev/null; then
-    apk mkpkg --info name:luci-app-xinfc --info version:1.0.1-r2 \
+    apk mkpkg --info name:luci-app-xinfc --info version:1.0.1-r3 \
         --info arch:aarch64_cortex-a53 --files "$WORK/root" \
         --script "pre-install:$WORK/preinst" --script "post-install:$WORK/postinst" \
         --script "post-deinstall:$WORK/postrm" --output "$WORK/xinfc.apk"
@@ -132,7 +134,7 @@ fi
 if command -v ar >/dev/null; then
     mkdir "$WORK/ipk"
     printf '2.0\n' > "$WORK/ipk/debian-binary"
-    printf 'Package: luci-app-xinfc\nVersion: 1.0.1-r2\nArchitecture: aarch64_cortex-a53\n' > "$WORK/control"
+    printf 'Package: luci-app-xinfc\nVersion: 1.0.1-r3\nArchitecture: aarch64_cortex-a53\n' > "$WORK/control"
     tar -czf "$WORK/ipk/control.tar.gz" -C "$WORK" control preinst postinst postrm
     tar -czf "$WORK/ipk/data.tar.gz" -C "$WORK/root" .
     (cd "$WORK/ipk"; ar cr "$WORK/xinfc.ipk" debian-binary control.tar.gz data.tar.gz)

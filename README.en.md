@@ -149,12 +149,25 @@ and `luci-i18n-argon-config-zh-cn`. Retained theme and language settings are nev
 overwritten. Recovery uses Bootstrap and excludes Argon/xinfc.
 
 xinfc imports the pinned 1.0.1-r1 APK payload from `packages/luci-app-xinfc/` and
-repackages it as 1.0.1-r2 using each branch's APK/IPK tooling. Installation hooks
+repackages it as 1.0.1-r3 using each branch's APK/IPK tooling. Installation hooks
 support offline builds; the payload and runtime hardware checks are unchanged.
 Installation and first boot never program NFC. The first backup under `/etc/xinfc/`
 is retained during upgrades. Original APK checksums are recorded in build info.
 The supplied APK does not include corresponding source; establish GPL source
 availability before public redistribution.
+
+The full image adds a default-checked **同时更改 NFC** option to the wireless
+interface's Wireless Security tab. Only a confirmed Save & Apply of changed
+SSID/key/encryption submits NFC synchronization; opening, saving a draft,
+unchecking, reverting or changing unrelated settings does not. Existing NFC
+write permission is required. Different networks require choosing one NFC
+target; identical dual-band credentials are written once. Disabled APs, PPSK
+and unsupported encryption are excluded. NFC supports WPA2-AES or WPA2/WPA3
+mixed mode, SSIDs of 2–28 bytes and passphrases of 8–63 bytes. Verify completion
+in Services / AX3000T NFC: RPC submission is not readback success. Connection
+loss may prevent synchronization; NFC failures do not undo applied Wi-Fi or
+automatically retry. This requires a rebuilt firmware, not just a package
+update on an older image. Installation and first boot still never write NFC.
 
 ## Repository layout
 

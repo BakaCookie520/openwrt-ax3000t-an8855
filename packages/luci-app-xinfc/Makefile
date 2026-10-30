@@ -4,7 +4,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-xinfc
 PKG_VERSION:=1.0.1
-PKG_RELEASE:=2
+PKG_RELEASE:=3
 PKG_LICENSE:=GPL-2.0-or-later
 PKG_FLAGS:=nonshared
 
@@ -50,6 +50,8 @@ define Package/luci-app-xinfc/install
 	$(INSTALL_DIR) $(1)/www/luci-static/resources/view $(1)/etc/uci-defaults
 	$(INSTALL_DATA) ./files/www/luci-static/resources/view/xinfc.js $(1)/www/luci-static/resources/view/
 	$(INSTALL_BIN) ./runtime/95-xinfc-state $(1)/etc/uci-defaults/
+	$(INSTALL_DIR) $(1)/www/luci-static/resources/xinfc
+	$(INSTALL_DATA) ./runtime/wireless.js $(1)/www/luci-static/resources/xinfc/
 endef
 
 define Package/luci-app-xinfc/preinst
