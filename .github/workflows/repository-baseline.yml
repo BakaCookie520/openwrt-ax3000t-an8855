@@ -41,3 +41,5 @@ jobs:
         run: bash scripts/tests/test-argon.sh
       - name: Check imported xinfc payload and offline package hooks
         run: bash scripts/tests/test-xinfc.sh
+      - name: Check wireless NFC apply lifecycle and permissions
+        run: node scripts/tests/test-wireless-nfc.js

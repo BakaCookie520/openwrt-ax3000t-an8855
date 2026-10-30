@@ -19,6 +19,7 @@ restore_config() {
     [ ! -f "$WORK/full.config" ] || cp "$WORK/full.config" "$TREE/.config"
     if [ -f "$WORK/full.config" ]; then
         bash "$ROOT/scripts/configure-argon.sh" "$TREE" full
+        python3 "$ROOT/scripts/configure-wireless-nfc.py" "$TREE" full
     fi
     rm -rf "$WORK"
 }
@@ -60,6 +61,10 @@ done
 mapfile -t roots < <(find "$TREE/build_dir" -maxdepth 3 -type d -name root-mediatek)
 [ "${#roots[@]}" -eq 1 ] || { echo "Expected one staged Mediatek rootfs" >&2; exit 1; }
 full_root="${roots[0]}"
+[ -s "$full_root/www/luci-static/resources/xinfc/wireless.js" ] &&
+    grep -q 'xinfc.wireless' "$full_root/www/luci-static/resources/view/network/wireless.js" || {
+    echo "Wireless NFC integration is missing from full rootfs" >&2; exit 1;
+}
 [ -s "$full_root/usr/lib/lua/luci/i18n/argon-config.zh-cn.lmo" ] || {
     echo "Compiled Argon Simplified Chinese catalog is missing" >&2; exit 1;
 }
@@ -120,6 +125,10 @@ grep -Eq "option[[:space:]]+mediaurlbase[[:space:]]+['\"]?/luci-static/bootstrap
 [ ! -e "$full_root/usr/lib/lua/luci/i18n/argon-config.zh-cn.lmo" ] || {
     echo "Argon catalog leaked into recovery rootfs" >&2; exit 1;
 }
+[ ! -e "$full_root/www/luci-static/resources/xinfc/wireless.js" ] &&
+    ! grep -q 'xinfc.wireless' "$full_root/www/luci-static/resources/view/network/wireless.js" || {
+    echo "Wireless NFC integration leaked into recovery rootfs" >&2; exit 1;
+}
 STRICT=1 HARD_LIMIT_MB=26 WARN_LIMIT_MB=25 \
     bash "$ROOT/scripts/check-image-size.sh" "$TARGET"
 bash "$ROOT/scripts/check-board-scripts.sh" "$TREE"
@@ -143,6 +152,8 @@ cp "$manifest" "$OUT/recovery.manifest"
     printf 'recovery-*-initramfs*: no Nikki/Mihomo, Tailscale, Argon or xinfc\n'
     printf 'Argon is the clean-install default; retained theme/language choices are preserved.\n'
     printf 'xinfc never programs NFC during installation or first boot.\n'
+    printf 'Full-image wireless security has default-checked NFC sync after confirmed Save & Apply.\n'
+    printf 'NFC submission is not readback success; verify in Services / AX3000T NFC.\n'
     printf 'Nikki is disabled until a user configures and enables it.\n'
     printf 'ttyd uses upstream @lan binding and /bin/login; no credentials are embedded.\n'
     printf 'Preserved upgrade configs override defaults; check old ttyd bindings manually.\n'

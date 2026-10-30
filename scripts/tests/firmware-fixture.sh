@@ -7,6 +7,16 @@ firmware_sources() {
         "$tree/package/luci-theme-argon/root/etc/uci-defaults" \
         "$tree/package/luci-theme-argon/po/zh_Hans" \
         "$tree/feeds/luci/modules/luci-base/root/etc/config"
+    mkdir -p "$tree/feeds/luci/modules/luci-mod-network/htdocs/luci-static/resources/view/network"
+    cat > "$tree/feeds/luci/modules/luci-mod-network/htdocs/luci-static/resources/view/network/wireless.js" <<'EOF'
+'use strict';
+'require form';
+function fixture(s) {
+    return network.getWifiNetwork(s.section).then(function(radioNet) {
+				ss.tab('encryption', _('Wireless Security'));
+    });
+}
+EOF
     printf 'msgid "Argon Config"\nmsgstr "Argon 主题设置"\n' \
         > "$tree/package/luci-theme-argon/po/zh_Hans/argon-config.po"
     cat > "$mediatek/image/filogic.mk" <<'EOF'

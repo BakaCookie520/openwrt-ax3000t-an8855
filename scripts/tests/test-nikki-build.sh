@@ -20,6 +20,12 @@ if grep -qx CONFIG_PACKAGE_nikki=y .config; then
     root=build_dir/target-test/root-mediatek
     mkdir -p "$root/usr/lib/lua/luci/i18n" "$root/etc/config"
     cp feeds/luci/modules/luci-base/root/etc/config/luci "$root/etc/config/"
+    mkdir -p "$root/www/luci-static/resources/"{xinfc,view/network}
+    cp feeds/luci/modules/luci-mod-network/htdocs/luci-static/resources/view/network/wireless.js \
+        "$root/www/luci-static/resources/view/network/"
+    if [ "${TEST_MISSING_NFC_SYNC:-0}" != 1 ]; then
+        printf 'NFC wireless integration fixture\n' > "$root/www/luci-static/resources/xinfc/wireless.js"
+    fi
     if [ "${TEST_MISSING_CATALOG:-0}" != 1 ]; then
         printf 'fixture compiled catalog\n' > "$root/usr/lib/lua/luci/i18n/argon-config.zh-cn.lmo"
     fi
@@ -48,6 +54,11 @@ else
     root=build_dir/target-test/root-mediatek
     cp feeds/luci/modules/luci-base/root/etc/config/luci "$root/etc/config/"
     rm -f "$root/usr/lib/lua/luci/i18n/argon-config.zh-cn.lmo"
+    cp feeds/luci/modules/luci-mod-network/htdocs/luci-static/resources/view/network/wireless.js \
+        "$root/www/luci-static/resources/view/network/"
+    if [ "${TEST_RECOVERY_NFC_SYNC:-0}" != 1 ]; then
+        rm -f "$root/www/luci-static/resources/xinfc/wireless.js"
+    fi
     printf 'recovery-overwrites-target-sysupgrade\n' > "$image-squashfs-sysupgrade.bin"
     truncate -s $(( ${TEST_OVERSIZE_RECOVERY:-1} *1024*1024)) "$image-initramfs-kernel.bin"
     printf 'safe-recovery\n' > "$image-initramfs-factory.ubi"
@@ -107,8 +118,10 @@ grep -qx CONFIG_PACKAGE_nikki=y "$WORK/success/.config"
 tar -tzf "$WORK/success-out/packages.tar.gz" | grep kmod-dummy >/dev/null
 (cd "$WORK/success-out"; sha256sum -c SHA256SUMS.txt)
 echo "ok: full image survives recovery pass, matching packages exported, full config restored"
+grep -q 'await xinfcWireless.addOption' \
+    "$WORK/success/feeds/luci/modules/luci-mod-network/htdocs/luci-static/resources/view/network/wireless.js"
 
-for failure in oversize full-oversize abi missing-module missing-theme missing-translation missing-catalog missing-xinfc recovery-theme recovery-xinfc recovery-translation; do
+for failure in oversize full-oversize abi missing-module missing-theme missing-translation missing-catalog missing-xinfc missing-nfc-sync recovery-theme recovery-xinfc recovery-translation recovery-nfc-sync; do
     fixture "$WORK/$failure"
     case "$failure" in
         oversize) export TEST_OVERSIZE_RECOVERY=27 ;;
@@ -119,9 +132,11 @@ for failure in oversize full-oversize abi missing-module missing-theme missing-t
         missing-translation) export TEST_MISSING_PACKAGE=luci-i18n-argon-config-zh-cn ;;
         missing-catalog) export TEST_MISSING_CATALOG=1 ;;
         missing-xinfc) export TEST_MISSING_PACKAGE=luci-app-xinfc ;;
+        missing-nfc-sync) export TEST_MISSING_NFC_SYNC=1 ;;
         recovery-theme) export TEST_RECOVERY_LEAK=luci-theme-argon ;;
         recovery-xinfc) export TEST_RECOVERY_LEAK=luci-app-xinfc ;;
         recovery-translation) export TEST_RECOVERY_LEAK=luci-i18n-argon-config-zh-cn ;;
+        recovery-nfc-sync) export TEST_RECOVERY_NFC_SYNC=1 ;;
     esac
     if BUILD_JOBS=1 bash "$ROOT/scripts/build-firmware.sh" \
         "$WORK/$failure" "$WORK/$failure-out" > "$WORK/$failure.log" 2>&1; then
@@ -133,13 +148,17 @@ for failure in oversize full-oversize abi missing-module missing-theme missing-t
         abi) grep -q 'Kernel ABI changed' "$WORK/$failure.log" ;;
         missing-module) grep -q 'Missing matching kernel package artifact' "$WORK/$failure.log" ;;
         missing-catalog) grep -q 'Compiled Argon Simplified Chinese catalog is missing' "$WORK/$failure.log" ;;
+        missing-nfc-sync) grep -q 'Wireless NFC integration is missing' "$WORK/$failure.log" ;;
+        recovery-nfc-sync) grep -q 'Wireless NFC integration leaked' "$WORK/$failure.log" ;;
         missing-*) grep -q 'Required installed package is missing' "$WORK/$failure.log" ;;
         recovery-*) grep -q 'Heavy package leaked' "$WORK/$failure.log" ;;
     esac
-    unset TEST_OVERSIZE_RECOVERY TEST_OVERSIZE_FULL TEST_CHANGED_ABI TEST_MISSING_MODULE TEST_MISSING_PACKAGE TEST_RECOVERY_LEAK TEST_MISSING_CATALOG
+    unset TEST_OVERSIZE_RECOVERY TEST_OVERSIZE_FULL TEST_CHANGED_ABI TEST_MISSING_MODULE TEST_MISSING_PACKAGE TEST_RECOVERY_LEAK TEST_MISSING_CATALOG TEST_MISSING_NFC_SYNC TEST_RECOVERY_NFC_SYNC
     grep -qx CONFIG_PACKAGE_nikki=y "$WORK/$failure/.config"
     grep -q "option mediaurlbase '/luci-static/argon'" \
         "$WORK/$failure/feeds/luci/modules/luci-base/root/etc/config/luci"
+    grep -q 'await xinfcWireless.addOption' \
+        "$WORK/$failure/feeds/luci/modules/luci-mod-network/htdocs/luci-static/resources/view/network/wireless.js"
     [ ! -e "$WORK/$failure-out/SHA256SUMS.txt" ]
     echo "ok: $failure fails closed and restores full configuration"
 done

@@ -30,4 +30,5 @@ awk '
 cat "$tmp" .config.seed > .config
 make defconfig
 bash "$ROOT/scripts/configure-argon.sh" "$TREE" "$PROFILE"
+python3 "$ROOT/scripts/configure-wireless-nfc.py" "$TREE" "$PROFILE"
 python3 "$ROOT/scripts/check-an8855.py" "$TREE"
