@@ -1,0 +1,271 @@
+#!/bin/sh
+# GPL-2.0-or-later. rpcd exec plugin; no arbitrary commands or device addresses.
+export LC_ALL=C
+umask 077
+
+STATE=/tmp/xinfc
+WRITER=/usr/sbin/xinfc-wsc
+SELF=/usr/libexec/rpcd/luci.xinfc
+BACKUP=/etc/xinfc/nfc_ndef_backup.bin
+COMPATIBLE=/proc/device-tree/compatible
+NFC_COMPATIBLE=/sys/bus/i2c/devices/0-0057/of_node/compatible
+
+supported() {
+	[ -r "$COMPATIBLE" ] || return 1
+	if tr '\000' '\n' < "$COMPATIBLE" |
+		grep -qxE 'xiaomi,mi-router-ax3000t(-ubootmod)?'; then
+		return 0
+	fi
+	# AN8855 boards are AX3000T too; require the firmware's NT082C declaration.
+	tr '\000' '\n' < "$COMPATIBLE" |
+		grep -Fxq 'xiaomi,mi-router-ax3000t-an8855' &&
+		[ -r "$NFC_COMPATIBLE" ] &&
+		tr '\000' '\n' < "$NFC_COMPATIBLE" | grep -Fxq nt082c
+}
+
+prepare_state() {
+	[ ! -L "$STATE" ] || return 1
+	mkdir -m 700 "$STATE" 2>/dev/null || [ -d "$STATE" ] || return 1
+	[ "$(stat -c '%u:%a' "$STATE")" = '0:700' ]
+}
+
+lock_control() {
+	exec 9>"$STATE/control.lock"
+	flock -x 9
+}
+
+set_phase() {
+	printf '%s\n' "$1" > "$STATE/phase.new" &&
+		mv "$STATE/phase.new" "$STATE/phase"
+}
+
+# A dead worker must not leave the UI permanently busy after rpcd restart/crash.
+recover_job() {
+	[ -d "$STATE/job.lock" ] || return 0
+	local pid age
+	pid="$(cat "$STATE/pid" 2>/dev/null)"
+	case "$pid" in
+		''|*[!0-9]*) ;;
+		*)
+			# PID reuse alone is not evidence that our worker is still running.
+			if kill -0 "$pid" 2>/dev/null &&
+				tr '\000' '\n' < "/proc/$pid/cmdline" 2>/dev/null |
+				grep -Fxq "$SELF"; then
+				return 0
+			fi
+			;;
+	esac
+	age=$(( $(date +%s) - $(stat -c %Y "$STATE/job.lock") ))
+	[ "$age" -ge 10 ] || return 0
+	set_phase error
+	printf '%s\n' 'NFC worker stopped unexpectedly. The chip may be partially written; retry after checking hardware.' > "$STATE/log"
+	rm -f "$STATE/pid"
+	rmdir "$STATE/job.lock" 2>/dev/null
+}
+
+if [ "$1" = worker ]; then
+	exec 9>&-
+	prepare_state && [ -d "$STATE/job.lock" ] || exit 1
+	printf '%s\n' "$$" > "$STATE/pid"
+	trap 'set_phase error; rm -f "$STATE/pid"; rmdir "$STATE/job.lock" 2>/dev/null; exit 1' HUP INT TERM
+	# The writer independently repeats model validation and acquires flock.
+	"$WRITER" --ax3000t > "$STATE/log" 2>&1
+	result=$?
+	printf '%s\n' "$result" > "$STATE/exit_code"
+	if [ "$result" -eq 0 ]; then set_phase success; else set_phase error; fi
+	rm -f "$STATE/pid"
+	rmdir "$STATE/job.lock" 2>/dev/null
+	exit "$result"
+fi
+
+. /usr/share/libubox/jshn.sh
+. /lib/functions.sh
+
+reply_error() {
+	json_init
+	json_add_boolean ok 0
+	json_add_string error "$1"
+	json_dump
+}
+
+allowed_encryption() {
+	case "$1" in psk2|psk2+ccmp|psk2+aes|sae-mixed) return 0;; esac
+	return 1
+}
+
+add_network() {
+	local section="$1" ssid encryption disabled mode radio radio_disabled
+	config_get mode "$section" mode
+	config_get disabled "$section" disabled 0
+	config_get radio "$section" device
+	config_get radio_disabled "$radio" disabled 0
+	[ "$mode" = ap ] && [ "$disabled" = 0 ] && [ "$radio_disabled" = 0 ] || return 0
+	config_get ssid "$section" ssid
+	config_get encryption "$section" encryption
+	json_add_object
+	json_add_string section "$section"
+	json_add_string ssid "$ssid"
+	json_add_string encryption "$encryption"
+	if allowed_encryption "$encryption"; then
+		json_add_boolean supported 1
+	else
+		json_add_boolean supported 0
+	fi
+	json_close_object
+}
+
+get_status() {
+	json_init
+	json_add_boolean ok 1
+	if supported; then json_add_boolean supported 1; else json_add_boolean supported 0; fi
+	json_add_string bus '0'
+	json_add_string address '0x57'
+	if [ -c /dev/i2c-0 ]; then json_add_boolean i2c_available 1; else json_add_boolean i2c_available 0; fi
+	if [ -x "$WRITER" ]; then json_add_boolean writer_available 1; else json_add_boolean writer_available 0; fi
+	if [ -L /sys/bus/i2c/devices/0-0057/driver ]; then
+		json_add_boolean driver_busy 1
+	else
+		json_add_boolean driver_busy 0
+	fi
+	if [ -f "$BACKUP" ] && [ ! -L "$BACKUP" ] && [ "$(stat -c '%u:%a:%s' "$BACKUP")" = '0:600:160' ]; then
+		json_add_boolean backup_available 1
+	else
+		json_add_boolean backup_available 0
+	fi
+	json_add_string backup_path "$BACKUP"
+	if prepare_state && lock_control; then
+		json_add_boolean runtime_available 1
+		recover_job
+		local phase
+		phase="$(cat "$STATE/phase" 2>/dev/null)"
+		json_add_string phase "${phase:-idle}"
+		if [ -d "$STATE/job.lock" ]; then json_add_boolean busy 1; else json_add_boolean busy 0; fi
+		# Writer diagnostics never include submitted SSID/password.
+		json_add_string log "$(tail -c 8192 "$STATE/log" 2>/dev/null)"
+	else
+		json_add_boolean runtime_available 0
+		json_add_boolean busy 0
+		json_add_string phase error
+		json_add_string log 'Unsafe or unavailable runtime directory.'
+	fi
+	config_load wireless
+	json_add_array networks
+	config_foreach add_network wifi-iface
+	json_close_array
+	json_dump
+}
+
+write_request() {
+	# jshn needs seekable input. FD 3 refers to an already-unlinked tmpfs file,
+	# not jshn -r "$json" (which exposes credentials in process arguments).
+	json_load_file /proc/self/fd/3
+	exec 3>&-
+	local section ssid password encryption field type
+	for field in section ssid password encryption; do
+		json_get_type type "$field"
+		[ "$type" = string ] || { reply_error 'Invalid request fields.'; return; }
+	done
+	json_get_var section section
+	json_get_var ssid ssid
+	json_get_var password password
+	json_get_var encryption encryption
+	# jshn exports parsed values; remove them before launching any child process.
+	json_cleanup
+	# json_get_var also marks destination variables for export.
+	export -n section ssid password encryption field type
+
+	if [ -n "$section" ]; then
+		case "$section" in *[!a-zA-Z0-9_]*)
+			reply_error 'Invalid wireless section.'; return;;
+		esac
+		[ "${#section}" -le 64 ] || { reply_error 'Invalid wireless section.'; return; }
+		config_load wireless
+		local section_type mode disabled radio radio_disabled
+		config_get section_type "$section" TYPE
+		config_get mode "$section" mode
+		config_get disabled "$section" disabled 0
+		config_get radio "$section" device
+		config_get radio_disabled "$radio" disabled 0
+		[ "$section_type" = wifi-iface ] && [ "$mode" = ap ] &&
+			[ "$disabled" = 0 ] && [ "$radio_disabled" = 0 ] ||
+			{ reply_error 'Select an enabled AP network.'; return; }
+		config_get ssid "$section" ssid
+		config_get password "$section" key
+		config_get encryption "$section" encryption
+	fi
+	[ "${#ssid}" -ge 2 ] && [ "${#ssid}" -le 28 ] &&
+		[ "${#password}" -ge 8 ] && [ "${#password}" -le 63 ] ||
+		{ reply_error 'SSID must be 2-28 bytes; password must be 8-63 bytes.'; return; }
+	case "$ssid$password" in *[[:cntrl:]]*)
+		reply_error 'Control characters are not supported.'; return;;
+	esac
+	allowed_encryption "$encryption" ||
+		{ reply_error 'Use WPA2 Personal (AES) or WPA2/WPA3 mixed mode.'; return; }
+	prepare_state || { reply_error 'Unsafe or unavailable runtime directory.'; return; }
+	lock_control || { reply_error 'Cannot lock the NFC task state.'; return; }
+	recover_job
+	mkdir "$STATE/job.lock" 2>/dev/null ||
+		{ reply_error 'Another NFC write is already running.'; return; }
+	rm -f "$STATE/pid" "$STATE/exit_code"
+	: > "$STATE/log"
+	set_phase running || { rmdir "$STATE/job.lock"; reply_error 'Cannot start NFC task.'; return; }
+	# No shell interpolation/eval, credential files, command line passwords or UCI writes.
+	(
+		printf '%s\000%s\000%s\000' "$ssid" "$password" "$encryption" |
+			"$SELF" worker
+	) 9>&- </dev/null >/dev/null 2>&1 &
+	json_init
+	json_add_boolean ok 1
+	json_dump
+}
+
+write_tag() {
+	supported || { reply_error 'Only Xiaomi AX3000T is supported.'; return; }
+	[ -c /dev/i2c-0 ] || { reply_error 'Missing /dev/i2c-0; check I2C kernel support.'; return; }
+	[ -x "$WRITER" ] || { reply_error 'NFC writer is not installed.'; return; }
+	[ ! -L /sys/bus/i2c/devices/0-0057/driver ] ||
+		{ reply_error 'The NFC chip is owned by a kernel driver; refusing raw I2C access.'; return; }
+	local request anonymous
+	export -n request anonymous
+	request="$(head -c 8193)"
+	[ "${#request}" -gt 0 ] && [ "${#request}" -le 8192 ] ||
+		{ reply_error 'Request is empty or too large.'; return; }
+	# Shell strings cannot represent NUL. Refuse this escape rather than let
+	# a shell JSON parser silently truncate a credential. A literal "\u0000"
+	# in a credential is conservatively refused too.
+	case "$request" in *'\u0000'*)
+		reply_error 'NUL characters are not supported.'; return;;
+	esac
+	prepare_state || { reply_error 'Unsafe or unavailable runtime directory.'; return; }
+	anonymous="$(mktemp "$STATE/parse.XXXXXX")" ||
+		{ reply_error 'Cannot prepare request parser.'; return; }
+	if ! exec 3<>"$anonymous"; then
+		rm -f "$anonymous"
+		reply_error 'Cannot open request parser.'; return
+	fi
+	# Unlink the EMPTY file before writing any credentials: only an anonymous
+	# RAM descriptor ever holds the request, never a named or persistent file.
+	if ! rm -f "$anonymous"; then
+		exec 3>&-
+		reply_error 'Cannot secure request parser.'; return
+	fi
+	if ! printf '%s' "$request" >&3; then
+		exec 3>&-
+		reply_error 'Cannot read request.'; return
+	fi
+	write_request
+}
+
+case "$1" in
+	list)
+		printf '%s\n' '{"status":{},"write":{"section":"","ssid":"","password":"","encryption":""}}'
+		;;
+	call)
+		case "$2" in
+			status) get_status;;
+			write) write_tag;;
+			*) reply_error 'Unknown method.';;
+		esac
+		;;
+	*) exit 1;;
+esac

@@ -29,3 +29,11 @@ jobs:
         run: bash scripts/tests/test-board-script-backups.sh
       - name: Check Nikki profiles and dual-image safety
         run: bash scripts/tests/test-nikki-build.sh
+      - name: Check supported build entry points
+        run: bash scripts/tests/test-build-entrypoints.sh
+      - name: Check AN8855 target and NFC prerequisites
+        run: bash scripts/tests/test-an8855.sh
+      - name: Check Argon defaults and retained theme choices
+        run: bash scripts/tests/test-argon.sh
+      - name: Check imported xinfc payload and offline package hooks
+        run: bash scripts/tests/test-xinfc.sh

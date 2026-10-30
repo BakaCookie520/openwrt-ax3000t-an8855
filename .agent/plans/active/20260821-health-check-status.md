@@ -15,7 +15,7 @@ Add a 'health-check' subcommand to setup.sh that reports basic project info: ver
 - Output includes OpenWrt commit SHA from patches/VERIFIED_COMMIT
 - Output includes build date (ISO 8601 format)
 - Output includes config summary (target, luci, tailscale, key kmods - at least 5 items)
-- Existing commands still work: `bash setup.sh`, `bash setup.sh build`, `bash setup.sh --branch openwrt-24.10 build`
+- Existing commands still work: `bash setup.sh`, `bash setup.sh build`
 - `bash -n setup.sh` passes (no syntax errors)
 
 # Authorization Scope

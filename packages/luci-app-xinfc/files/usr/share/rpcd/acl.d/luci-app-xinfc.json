@@ -1,0 +1,15 @@
+{
+  "luci-app-xinfc": {
+    "description": "Manage the AX3000T NFC Wi-Fi tag",
+    "read": {
+      "ubus": {
+        "luci.xinfc": ["status"]
+      }
+    },
+    "write": {
+      "ubus": {
+        "luci.xinfc": ["write"]
+      }
+    }
+  }
+}

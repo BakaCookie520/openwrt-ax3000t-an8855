@@ -10,12 +10,15 @@
 
 ---
 
+> Historical plan: current package/profile and target policy is recorded in
+> `docs/adr/0002-argon-xinfc-and-target-guards.md`. This is not an active build specification.
+
 ## Objective
 
 Implement a complete CI/CD pipeline using GitHub Actions that:
-1. Builds firmware + OpenClash APK on push/PR to master
+1. Builds the AN8855 firmware and matching native packages
 2. Runs scheduled nightly builds against OpenWrt main
-3. Supports multi-branch builds (master + openwrt-24.10)
+3. Supports patched mainline and dynamic stable builds
 4. Automates releases via semantic-release (Conventional Commits → version → tag → release)
 5. Auto-updates VERIFIED_COMMIT on successful master builds
 6. Uploads artifacts to workflow (90-day) and GitHub Releases
@@ -24,13 +27,10 @@ Implement a complete CI/CD pipeline using GitHub Actions that:
 
 ## Acceptance Criteria
 
-- [ ] CI workflow triggers on push/PR to master and runs full build (firmware + OpenClash APK)
 - [ ] Scheduled nightly build runs via cron (02:00 UTC daily)
-- [ ] openwrt-24.10 branch builds successfully (without VERIFIED_COMMIT lock)
 - [ ] semantic-release creates version tag and GitHub Release on conventional commits to master
 - [ ] VERIFIED_COMMIT updated in repo (patches/VERIFIED_COMMIT) after successful master build
 - [ ] Image size validation (scripts/check-image-size.sh STRICT=1) runs and gates build success
-- [ ] Firmware artifacts (initramfs-factory.ubi, squashfs-sysupgrade.bin) + OpenClash APK uploaded to workflow artifacts and GitHub Releases
 - [ ] All workflows pass on test pushes
 
 ---
@@ -79,7 +79,6 @@ Implement a complete CI/CD pipeline using GitHub Actions that:
 | GitHub Actions build timeout (6h) on busy runners | Low | Medium | Set explicit timeout-minutes: 180; monitor; add ccache caching |
 | VERIFIED_COMMIT auto-update requires git push from CI | Medium | High | Use GITHUB_TOKEN with contents:write; test in fork first; add failure notification via workflow status |
 | semantic-release creates unexpected versions | Low | Medium | Document commit convention; use --dry-run first; configure release rules explicitly |
-| OpenClash feed fails to update/install | Medium | Medium | Add feed update retry logic (3 retries); cache feeds; fail fast with clear error |
 | Patch drift on OpenWrt main breaks nightly build | High | High | Nightly build will fail fast; alert via workflow failure; manual VERIFIED_COMMIT update needed |
 
 ---
@@ -139,7 +138,7 @@ The following actions will occur **during workflow execution** (not during imple
 **These L2 actions are gated by:**
 1. Workflow must pass all build/validation steps
 2. For releases: only triggers on push to master with conventional commit
-3. For VERIFIED_COMMIT: only on successful master branch build (not PR, not openwrt-24.10)
+3. For VERIFIED_COMMIT: only on successful master branch build (not PR)
 4. **Explicit user confirmation required before merging this PR** to enable these workflows
 
 ---
@@ -157,7 +156,7 @@ The following actions will occur **during workflow execution** (not during imple
 ### Phase 1: Core CI Workflow (`.github/workflows/ci.yml`)
 - Push/PR trigger on master
 - Scheduled cron (02:00 UTC daily)
-- Multi-branch: master + openwrt-24.10
+- Patched mainline snapshot plus independent dynamic stable workflow
 - Build steps mirroring setup.sh
 - Image size validation
 - Artifact upload (workflow artifacts)
@@ -165,7 +164,7 @@ The following actions will occur **during workflow execution** (not during imple
 ### Phase 2: VERIFIED_COMMIT Auto-Update (`scripts/update-verified-commit.sh`)
 - Extract current OpenWrt commit SHA after successful build
 - Update patches/VERIFIED_COMMIT
-- Commit and push (only on master, not PR, not openwrt-24.10)
+- Commit and push (only on master, not PR)
 
 ### Phase 3: semantic-release Configuration (`.releaserc.json`)
 - Conventional Commits analysis

@@ -13,8 +13,6 @@
 #     勿用。详见 docs/reference/router-state.md §0。
 #   * 完整升级固件预装 Nikki/Mihomo 与 ttyd；精简恢复镜像不带大型 Go 服务。
 #   * 无自定义 fwx 内核补丁,保持纯净主线。
-#   * OpenClash (luci-app-openclash) 以独立 apk 提供,不进固件(避免 initramfs
-#     超过原厂 U-Boot 加载体积上限);装时 apk add 并自动拉 luci-compat 等依赖。
 #   * 自编译内核需使用同一次构建的匹配模块包,本脚本预置了**精简工具集**:
 #     zram、iptables+nftables 双栈 + 核心 netfilter、wireguard/veth/tun 隧道、
 #     QoS(cake/fq-pie)、ext4、tcpdump/conntrack/ipset/tc-full 等诊断工具。
@@ -24,9 +22,7 @@
 # 用法:
 #   1) bash setup.sh                     # 只做克隆 + feeds + 配置 (main 分支)
 #   2) bash setup.sh build               # 直接开始编译 (main 分支)
-#   3) bash setup.sh --branch openwrt-24.10 [build]
-#                                        # 换分支编译;非 main 分支跳过补丁与 commit 锁定
-#   (--branch 与 build 可任意顺序;默认 main,行为与旧版一致)
+#   固定构建带 AN8855 补丁的主线；正式稳定版使用独立 Actions 工作流。
 # ============================================================
 
 set -euo pipefail
@@ -36,34 +32,21 @@ bash -n "$0"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 bash -n "${SCRIPT_DIR}/scripts/check-image-size.sh"
 
-# ---- 参数解析:支持 --branch <分支> 与位置参数 build,任意顺序 ----
+# ---- 参数解析:本地只构建带补丁的主线 ----
 BRANCH="main"
 BUILD_MODE=0
 while [ $# -gt 0 ]; do
     case "$1" in
-        --branch)
-            [ $# -ge 2 ] || { echo "  ❌ --branch 需带分支名,示例: bash setup.sh --branch openwrt-24.10" >&2; exit 1; }
-            BRANCH="$2"
-            shift 2
-            ;;
-        --branch=*)
-            BRANCH="${1#*=}"
-            shift
-            ;;
         build)
             BUILD_MODE=1
             shift
             ;;
         *)
-            echo "  ❌ 未知参数: $1 (支持: build / --branch <分支>)" >&2
+            echo "  ❌ 未知参数: $1 (支持: build)" >&2
             exit 1
             ;;
     esac
 done
-if [ -z "$BRANCH" ]; then
-    echo "  ❌ --branch 分支名为空" >&2
-    exit 1
-fi
 
 export OPENWRT_DIR="$(pwd)/openwrt-ax3000t"
 # 外层仓库的 patches/ 目录(含 an8855 目标补丁),相对本脚本所在目录推导
@@ -87,33 +70,27 @@ if [ ! -d "$OPENWRT_DIR" ]; then
     git clone --depth 1 --branch "$BRANCH" --single-branch \
         https://git.openwrt.org/openwrt/openwrt.git "$OPENWRT_DIR"
 fi
-# commit 锁定仅对 main 生效(VERIFIED_COMMIT 记录的是 main 分支已验证 commit)。
-# 其它分支(如 openwrt-24.10)历史不同,不能直接 checkout 该 sha,故跳过锁定。
-if [ "$BRANCH" = "main" ] && [ -n "$OPENWRT_COMMIT" ]; then
+# VERIFIED_COMMIT 记录主线已验证提交；本地不再提供跳过锁定或补丁的分支入口。
+if [ -n "$OPENWRT_COMMIT" ]; then
     echo "  锁定到已验证 commit: $OPENWRT_COMMIT"
     git -C "$OPENWRT_DIR" fetch --depth 1 origin "$OPENWRT_COMMIT" \
         || { echo "  无法获取 commit $OPENWRT_COMMIT,检查 patches/VERIFIED_COMMIT" >&2; exit 1; }
     git -C "$OPENWRT_DIR" checkout --force "$OPENWRT_COMMIT"
-elif [ "$BRANCH" = "main" ]; then
-    echo "  ⚠️ 未设置 OPENWRT_COMMIT(patches/VERIFIED_COMMIT 缺失),跟随 main 最新,补丁可能漂移失效。"
 else
-    echo "  非 main 分支($BRANCH),跳过 commit 锁定与 an8855 补丁,跟随分支最新。"
+    echo "  ⚠️ 未设置 OPENWRT_COMMIT(patches/VERIFIED_COMMIT 缺失),跟随 main 最新,补丁可能漂移失效。"
 fi
 
 cd "$OPENWRT_DIR"
 
 echo ""
-echo "=== 步骤 2: 准备 OpenClash / Nikki feed 配置 ==="
-# Both feeds are refreshed after applying board patches (step 3).
+echo "=== 步骤 2: 准备 Nikki / Argon / 本地软件包 feed 配置 ==="
+# Feeds are refreshed after applying board patches (step 3).
 echo ""
 echo "=== 步骤 2.5: 应用 an8855 单 UBI 目标补丁(仅 main 分支,关键!) ==="
 # 主线 main 只有 stock 双分区 / ubootmod 目标,AN8855 + 原厂 U-Boot 需要
 # 独立的单 UBI 目标才能持久启动。补丁文件固化在外层仓库 patches/ 下。
 # 若已应用(设备已在 filogic.mk 中定义)则跳过,避免重复打补丁报错。
-# 非 main 分支(如 openwrt-24.10)官方自带 an8855 单 UBI 目标,无需补丁,整体跳过。
-if [ "$BRANCH" != "main" ]; then
-    echo "  非 main 分支($BRANCH),官方自带 an8855 单 UBI 目标,跳过补丁应用"
-elif grep -q "Device/xiaomi_mi-router-ax3000t-an8855" target/linux/mediatek/image/filogic.mk; then
+if grep -q "Device/xiaomi_mi-router-ax3000t-an8855" target/linux/mediatek/image/filogic.mk; then
     echo "  an8855 目标已存在,跳过打补丁"
 else
     echo "  复制 DTS ..."
@@ -152,7 +129,8 @@ rm -f target/linux/mediatek/filogic/base-files/etc/board.d/02_network.orig
 bash "${SCRIPT_DIR}/check-board-scripts.sh" "$OPENWRT_DIR"
 
 echo ""
-echo "=== 步骤 3: 更新并安装 feeds ==="
+echo "=== 步骤 3: 校验 AN8855 源码并安装 feeds ==="
+python3 "${SCRIPT_DIR}/check-an8855.py" --source-only "$OPENWRT_DIR"
 bash "${SCRIPT_DIR}/prepare-feeds.sh" "$OPENWRT_DIR"
 
 echo ""
@@ -160,7 +138,7 @@ echo "=== 步骤 4: 生成默认配置 ==="
 make defconfig
 
 echo ""
-echo "=== 步骤 5: 预置本设备目标 + OpenClash + LuCI ==="
+echo "=== 步骤 5: 预置 AN8855 目标 + 中文 Argon + xinfc + LuCI ==="
 # 用标准 Kconfig 符号种子化 .config,再 defconfig 让它自动补全依赖。
 # (符号名遵循 OpenWrt metadata 约定:
 #    CONFIG_TARGET_<target>_<subtarget>_DEVICE_<device>)
@@ -173,7 +151,7 @@ for s in \
     PACKAGE_luci PACKAGE_luci-ssl LUCI_LANG_zh_Hans \
     PACKAGE_luci-compat PACKAGE_luci-lua-runtime \
     PACKAGE_luci-mod-dsl PACKAGE_luci-i18n-dsl-zh-cn \
-    PACKAGE_luci-app-openclash PACKAGE_luci-app-nlbwmon \
+    PACKAGE_luci-app-nlbwmon \
     PACKAGE_tailscale PACKAGE_luci-app-tailscale-community \
     PACKAGE_iptables PACKAGE_iptables-nft PACKAGE_ip6tables-nft \
     PACKAGE_xtables-legacy PACKAGE_xtables-nft \
@@ -276,7 +254,7 @@ echo ""
 echo "  已自动选中:"
 echo "    Target Profile -> Xiaomi Mi Router AX3000T (AN8855, 单 UBI, 原厂 U-Boot)"
 echo "    LuCI (+ SSL,中文)"
-echo "    完整版预装 Nikki/Mihomo、ttyd、Tailscale；恢复版不含大型代理与 Tailscale"
+echo "    完整版预装 Nikki/Mihomo、ttyd、Tailscale、中文 Argon 和 xinfc；恢复版保持精简"
 echo "    zram 内存压缩 / iptables+nftables 双栈 / 核心 netfilter / wireguard 隧道 / QoS(cake/fq-pie)"
 echo "    tcpdump / conntrack / ipset / tc-full / ext4 / 诊断工具 (精简版,适配原厂 U-Boot 体积上限)"
 echo ""

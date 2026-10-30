@@ -2,9 +2,9 @@ name: CI - Build OpenWrt AX3000T-AN8855
 
 on:
   push:
-    branches: [master, openwrt-24.10]
+    branches: [master]
   pull_request:
-    branches: [master, openwrt-24.10]
+    branches: [master]
   schedule:
     - cron: '0 2 1 * *'  # 02:00 UTC on the 1st of each month
   workflow_dispatch: {}
@@ -13,40 +13,22 @@ env:
   OPENWRT_DIR: ${{ github.workspace }}/openwrt-ax3000t
   REPO_PATCH_DIR: ${{ github.workspace }}/patches
   SCRIPT_DIR: ${{ github.workspace }}/scripts
-  OPENCLASH_URL: https://github.com/vernesong/OpenClash.git
+  BUILD_REF: main
   CCACHE_DIR: ${{ github.workspace }}/.ccache
 
 jobs:
   build:
-    name: Build (${{ matrix.build_id }})
+    name: Build (mainline AN8855)
     runs-on: ubuntu-latest
     timeout-minutes: 360
     permissions:
       contents: write  # Required for VERIFIED_COMMIT auto-update push
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - build_id: master
-            source_ref: master
-            verified_commit_lock: true
-            apply_an8855_patches: true
-            artifact_prefix: master
-          - build_id: openwrt-24.10
-            source_ref: openwrt-24.10
-            verified_commit_lock: false
-            apply_an8855_patches: false
-            artifact_prefix: openwrt-24.10
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0  # Needed for semantic-release and VERIFIED_COMMIT update
           token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up OpenWrt source reference
-        run: |
-          echo "BUILD_REF=${{ matrix.source_ref }}" >> "$GITHUB_ENV"
 
       - name: Install dependencies
         run: |
@@ -78,12 +60,11 @@ jobs:
           path: |
             ${{ env.CCACHE_DIR }}
             ${{ env.OPENWRT_DIR }}/dl
-          key: ${{ runner.os }}-openwrt-${{ matrix.build_id }}-${{ hashFiles('scripts/generate-config-seed.sh') }}
+          key: ${{ runner.os }}-openwrt-main-${{ hashFiles('scripts/generate-config-seed.sh') }}
           restore-keys: |
-            ${{ runner.os }}-openwrt-${{ matrix.build_id }}-
+            ${{ runner.os }}-openwrt-main-
 
       - name: Lock to VERIFIED_COMMIT
-        if: ${{ matrix.verified_commit_lock }}
         run: |
           cd "$OPENWRT_DIR"
           if [ -f "$REPO_PATCH_DIR/VERIFIED_COMMIT" ]; then
@@ -100,7 +81,6 @@ jobs:
           fi
 
       - name: Apply an8855 patches
-        if: ${{ matrix.apply_an8855_patches }}
         run: |
           cd "$OPENWRT_DIR"
           if grep -q "Device/xiaomi_mi-router-ax3000t-an8855" target/linux/mediatek/image/filogic.mk; then
@@ -134,7 +114,10 @@ jobs:
           rm -f target/linux/mediatek/filogic/base-files/etc/board.d/02_network.orig
           bash "${SCRIPT_DIR}/check-board-scripts.sh" "$OPENWRT_DIR"
 
-      - name: Refresh OpenClash and latest Nikki sources
+      - name: Verify AN8855 single-UBI and NFC sources
+        run: python3 "${SCRIPT_DIR}/check-an8855.py" --source-only "$OPENWRT_DIR"
+
+      - name: Refresh Nikki, pinned Argon and local packages
         run: bash "${SCRIPT_DIR}/prepare-feeds.sh" "$OPENWRT_DIR"
 
       - name: Generate defconfig
@@ -264,11 +247,11 @@ jobs:
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: firmware-${{ matrix.artifact_prefix }}-${{ github.sha }}
+          name: firmware-master-${{ github.sha }}
           path: ${{ env.ARTIFACT_DIR }}/*
           retention-days: 90
 
       - name: Update VERIFIED_COMMIT (master, non-PR, success only)
-        if: ${{ matrix.verified_commit_lock && github.event_name != 'pull_request' && success() }}
+        if: ${{ github.event_name != 'pull_request' && success() }}
         run: |
           bash "${SCRIPT_DIR}/update-verified-commit.sh" "${OPENWRT_DIR}" "${REPO_PATCH_DIR}"

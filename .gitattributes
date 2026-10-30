@@ -1,1 +1,5 @@
 * text=auto eol=lf
+*.apk -text
+packages/luci-app-xinfc/files/usr/sbin/xinfc-wsc -text
+# apk adbdump indents original shell tabs with YAML spaces; preserve its bytes.
+packages/luci-app-xinfc/source/original.adbdump whitespace=-space-before-tab

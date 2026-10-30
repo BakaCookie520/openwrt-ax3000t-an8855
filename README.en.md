@@ -10,7 +10,7 @@ Build reproducible OpenWrt firmware for the Xiaomi Mi Router AX3000T with the
 AN8855 switch variant. The project produces a single-UBI firmware target for
 stock U-Boot. Its full sysupgrade preinstalls Nikki/Mihomo, ttyd and Tailscale;
 a separate slim recovery initramfs stays within the bootloader limit.
-OpenClash remains an optional standalone package.
+The full image also includes Argon, its Simplified Chinese settings translation, and xinfc NFC management.
 
 ## Preinstalled services and dual-image artifacts
 
@@ -25,9 +25,9 @@ Validated files are saved under `openwrt-ax3000t/bin/ax3000t-artifacts/`:
 
 - `full-*-squashfs-sysupgrade.bin`: the complete daily-use system.
 - `recovery-*-initramfs*`: a temporary recovery system without Nikki/Mihomo,
-  yq or Tailscale, but with LuCI/ttyd; recovery FIT must not exceed 26 MiB.
+  yq, Tailscale, Argon or xinfc, but with LuCI/ttyd; recovery FIT must not exceed 26 MiB.
 - `packages.tar.gz`: matching APK/IPK packages and indexes, including kernel modules
-  and optional OpenClash. Use the package format appropriate for the selected branch.
+  and the preinstalled applications. Use the native package format for the branch.
 - Manifests, full/recovery configs, build provenance and SHA256 checksums.
 
 Oversized full initramfs files are never exported. Full sysupgrade files have a
@@ -41,8 +41,7 @@ Preserved network/Wi-Fi settings are not overwritten. Upstream ttyd defaults bin
 `@lan` and run `/bin/login`; retained old ttyd settings are not migrated automatically.
 An old `lan4` binding should be corrected to `@lan`/`br-lan` manually. A bridged AP
 still needs a separately planned proxy topology; installation alone does not
-redirect client traffic. Never enable Nikki and OpenClash transparent interception
-at the same time. Test offline with `bash scripts/tests/test-nikki-build.sh`.
+redirect client traffic. Test offline with `bash scripts/tests/test-nikki-build.sh`.
 
 ## Important warning
 
@@ -56,15 +55,15 @@ verify the exact hardware before proceeding.
 
 | Build | Source branch/release | Target handling |
 | --- | --- | --- |
-| Mainline snapshot | `master` | Applies the repository AN8855 patch set and locks to `patches/VERIFIED_COMMIT`. |
-| OpenWrt 24.10 snapshot | `openwrt-24.10` | Uses the upstream AN8855 target without the repository patch set. |
+| Mainline snapshot | `main` | Applies the repository AN8855 patch set and locks to `patches/VERIFIED_COMMIT`. |
 | Latest stable release | `stable-latest` | Resolves the highest non-prerelease OpenWrt release tag at build time and applies the repository AN8855 patch set. |
 
 The build includes Tailscale, LuCI, `luci-compat`, networking and diagnostic
 packages, WireGuard, QoS modules, zram, and a curated filesystem/module set.
-OpenClash is built separately as an APK.
+The shared target guard rejects stock/ubootmod selections, incorrect single-UBI layouts,
+incomplete upgrade handlers, or missing NFC/I2C prerequisites.
 
-GitHub Actions builds the two snapshot variants in parallel. The stable
+GitHub Actions builds only the patched mainline snapshot. The stable
 variant runs in a separate workflow, is resolved dynamically, and is therefore
 not pinned to a specific release tag.
 
@@ -91,12 +90,6 @@ bash setup.sh
 bash setup.sh build
 ```
 
-To build OpenWrt 24.10:
-
-```sh
-bash setup.sh --branch openwrt-24.10 build
-```
-
 The first full build may take several hours and requires substantial disk space.
 
 ## Build outputs
@@ -110,7 +103,6 @@ openwrt-ax3000t/bin/targets/mediatek/filogic/
 Use validated deliverables from `openwrt-ax3000t/bin/ax3000t-artifacts/`, not
 unfiltered files from the intermediate target directory. See the dual-image
 section above for the full/recovery prefixes, package archive and provenance.
-OpenClash remains optional and is included as a package in `packages.tar.gz`.
 
 ## Flashing and upgrading
 
@@ -139,8 +131,19 @@ New installations default to LAN IP `192.168.31.1` with Wi-Fi disabled.
 The board defaults do not overwrite retained LAN, SSID, encryption, or password
 settings during an upgrade. After the first boot, set a root password and
 configure Wi-Fi encryption before enabling wireless access. Nikki is preinstalled
-but disabled until configured. OpenClash can be installed separately from the
-matching package archive, using APK or IPK as appropriate for the branch.
+but disabled until configured.
+
+Fresh full installations default to Argon, including the integrated settings page
+and `luci-i18n-argon-config-zh-cn`. Retained theme and language settings are never
+overwritten. Recovery uses Bootstrap and excludes Argon/xinfc.
+
+xinfc imports the pinned 1.0.1-r1 APK payload from `packages/luci-app-xinfc/` and
+repackages it as 1.0.1-r2 using each branch's APK/IPK tooling. Installation hooks
+support offline builds; the payload and runtime hardware checks are unchanged.
+Installation and first boot never program NFC. The first backup under `/etc/xinfc/`
+is retained during upgrades. Original APK checksums are recorded in build info.
+The supplied APK does not include corresponding source; establish GPL source
+availability before public redistribution.
 
 ## Repository layout
 
@@ -162,17 +165,15 @@ docs/                                Stable development and operations reference
 | --- | --- |
 | Prepare source | `bash setup.sh` |
 | Full build | `bash setup.sh build` |
-| Build OpenWrt 24.10 | `bash setup.sh --branch openwrt-24.10 build` |
 | Configure packages | `cd openwrt-ax3000t && make menuconfig` |
-| Compile OpenClash | `cd openwrt-ax3000t && make package/feeds/openclash/luci-app-openclash/compile V=s` |
 | Validate initramfs size | `scripts/check-image-size.sh openwrt-ax3000t/bin/targets/mediatek/filogic` |
 | Check board script backups | `bash scripts/check-board-scripts.sh openwrt-ax3000t` |
 | Repository baseline | `scripts/repository-check` |
 
 ## GitHub Actions
 
-The CI workflow builds the `master` and `openwrt-24.10` snapshot variants,
-checks the initramfs size, compiles OpenClash, and uploads firmware/APK
+The CI workflow builds OpenWrt `main` on repository `master` pushes and pull requests,
+checks the target/layout and initramfs size, and uploads firmware/package
 artifacts. The separate `stable-latest.yml` workflow performs the same build
 for the latest stable OpenWrt release. Both workflows cache OpenWrt downloads
 and compiler results; artifacts are retained by GitHub Actions for 90 days.
@@ -185,7 +186,7 @@ publishes a GitHub Release with the validated firmware/APK assets.
 
 - The stock bootloader requires the AN8855 single-UBI layout.
 - The initramfs FIT image must remain at or below 26 MiB.
-- OpenClash is intentionally not included in the firmware image.
+- Nikki/Mihomo, Tailscale, Argon and xinfc are installed only in the full image.
 - The standard AX3000T/MT7531 target is not interchangeable with this target.
 - OpenWrt source and build outputs are local ignored artifacts, not repository
   state.

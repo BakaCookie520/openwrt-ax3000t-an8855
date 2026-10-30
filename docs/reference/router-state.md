@@ -58,10 +58,6 @@
 | `.../filogic/base-files/etc/board.d/02_network` | 加 an8855 的 LAN/WAN(wan lan2-4)与 MAC(Bdata ethaddr_wan)规则 |
 | `.config` | 目标切到 `CONFIG_TARGET_mediatek_filogic_DEVICE_xiaomi_mi-router-ax3000t-an8855=y` |
 
-**OpenClash 显示问题(2026-08-14 定位):** 固件里其实有 OpenClash 文件,但 LuCI 菜单不显示。
-根因 = 主线 **LuCI 26 移除 Lua**,OpenClash 是 Lua 应用,缺 `luci-compat`。修法见 README FAQ;
-编译期在 `.config` 加 `CONFIG_PACKAGE_luci-compat=y`(+`luci-lua-runtime`),`setup.sh` 已自动加上。
-
 **刷入流程(与原一致):** 恢复页/initramfs 刷 initramfs-factory.ubi → 内存系统 `sysupgrade -n` squashfs。
 
 > 排障辅助事实:sysupgrade 写进 `ubi_kernel` 的 `kernel` 卷内容是合法 FIT(magic `d00dfeed`),
