@@ -19,19 +19,14 @@ index ceda938..0bb2dd9 100644
  	xiaomi,mi-router-wr30u-stock|\
  	xiaomi,mi-router-wr30u-ubootmod|\
 diff --git a/target/linux/mediatek/filogic/base-files/lib/upgrade/platform.sh b/target/linux/mediatek/filogic/base-files/lib/upgrade/platform.sh
-index b351b08..bddbfd4 100644
+index b351b08..fec1255 100644
 --- a/target/linux/mediatek/filogic/base-files/lib/upgrade/platform.sh
 +++ b/target/linux/mediatek/filogic/base-files/lib/upgrade/platform.sh
-@@ -271,7 +271,8 @@ platform_do_upgrade() {
+@@ -271,3 +271,4 @@ platform_do_upgrade() {
++	xiaomi,mi-router-ax3000t-an8855|\
  	cudy,wr3000p-v1|\
  	huasifei,wh3000-pro-nand|\
  	huasifei,wh3000r-nand|\
--	jiorouter,ax6000-jidu6101)
-+	jiorouter,ax6000-jidu6101|\
-+	xiaomi,mi-router-ax3000t-an8855)
- 		CI_UBIPART="ubi"
- 		nand_do_upgrade "$1"
- 		;;
 diff --git a/target/linux/mediatek/image/filogic.mk b/target/linux/mediatek/image/filogic.mk
 index 5725c44..a545c46 100644
 --- a/target/linux/mediatek/image/filogic.mk

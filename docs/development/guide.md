@@ -54,17 +54,14 @@ go 1.22.0
 ### What `setup.sh` Does
 
 ```bash
-# Step 1: Clone the fixed OpenWrt main source branch
-git clone --depth 1 --branch main https://git.openwrt.org/openwrt/openwrt.git openwrt-ax3000t
-
-# Step 2: Lock to verified commit (main branch only)
-# Reads patches/VERIFIED_COMMIT, fetches & checks out that SHA
-# Prevents mainline drift breaking patches
+# Step 1: Clone or refresh the latest OpenWrt main source
+bash scripts/checkout-openwrt-main.sh openwrt-ax3000t
+# No VERIFIED_COMMIT lock/fallback. Refuse to discard tracked local edits.
 
 # Step 3: Apply AN8855 patches (main branch only)
 # patches/0001-add-an8855-target.patch → filogic.mk + platform.sh + 02_network
 # patches/mt7981b-xiaomi-mi-router-ax3000t-an8855.dts → single UBI DTS
-# Dry-run validation before/after application
+# Zero-fuzz dry-run validation before application, source safety gates afterward
 
 # Step 4: Refresh Nikki, pinned Argon, and local xinfc packages
 bash ../scripts/prepare-feeds.sh "$PWD"
@@ -166,10 +163,21 @@ make menuconfig
 
 ### Supported source builds
 
-Local `bash setup.sh [build]` uses only mainline with `VERIFIED_COMMIT` and the
-AN8855 patches. The separate stable workflow resolves the latest formal release
-and applies the same safety gates. There is no fixed older-release build path
-or local `--branch` override.
+Local `bash setup.sh [build]` and mainline Actions use the same latest-main
+checkout script and AN8855 patches. A reused source tree is fetched again; if
+upstream advanced and tracked files are dirty, setup stops instead of losing
+edits (including previously applied patches) or silently building stale sources.
+Save your changes and use a clean OpenWrt checkout to advance.
+The separate stable workflow resolves the latest formal release and applies the
+same safety gates. There is no fixed older-release build path or local `--branch`
+override. `patches/VERIFIED_COMMIT` is retained only as a historical reference.
+Each build records its actual source commit in `BUILD-INFO.txt`.
+
+The upgrade patch inserts AN8855 at the beginning of the existing single-UBI
+device group, not at its changing last member. This preserves additional stable
+or future device entries. Every entry point uses `patch --fuzz=0`: offsets are
+allowed, context mismatches stop the build. This does not promise compatibility
+with arbitrary future driver, device-tree or image-format changes.
 
 ### Custom Feed / Package
 
@@ -408,7 +416,7 @@ Example: `fix(patches): correct AN8855 MAC address extraction`
 | Single UBI target on mainline | Stock U-Boot + AN8855 only boots single UBI | `docs/reference/router-state.md` §0 |
 | Curated kmod set | 179 kmods → 27.9MB initramfs (fail); curated → ~25MB | `docs/reports/build-experience.md` §6.3 |
 | USTC mirror default | Domestic download 28500x faster | `docs/reports/build-experience.md` §4.2 |
-| `VERIFIED_COMMIT` lock | Prevent mainline drift breaking patches | `setup.sh` §75-83 |
+| Latest main + strict patch/source gates | Follow upstream without silently building old or incorrect targets | `scripts/checkout-openwrt-main.sh`, ADR 0003 |
 | `REPO_PATCH_DIR` not `PATCH_DIR` | Avoids OpenWrt kernel.mk variable collision | `docs/reports/build-experience.md` §9 |
 
 ---
@@ -448,13 +456,13 @@ This project uses GitHub Actions for continuous integration and semantic-release
 
 | Workflow | File | Triggers | Purpose |
 |----------|------|----------|---------|
-| **CI Build** | `.github/workflows/ci.yml` | Push/PR to `master`, manual dispatch | Build the patched mainline snapshot, validate image size, upload firmware/APK artifacts |
+| **CI Build** | `.github/workflows/ci.yml` | Daily 02:00 UTC, push/PR to `master`, manual dispatch | Build latest patched mainline, validate image size, upload firmware/APK artifacts |
 | **Stable Build** | `.github/workflows/stable-latest.yml` | Monthly cron (02:00 UTC), manual dispatch | Resolve the latest stable OpenWrt release and build validated full/recovery firmware |
 | **Release** | `.github/workflows/release.yml` | Push to `master` (after CI passes) | semantic-release: analyze commits → version → tag → GitHub Release with artifacts |
 
 ### CI Build Details
 
-**Mainline build**: OpenWrt `main`, with VERIFIED_COMMIT lock + AN8855 patches.
+**Mainline build**: Latest OpenWrt `main` + AN8855 patches, fetched once per run.
 The repository branch remains `master`; the single build no longer uses a matrix.
 
 The `stable-latest` build is intentionally outside the PR/push matrix so a
@@ -469,7 +477,9 @@ the ccache directory.
 
 **Image size gate**: `scripts/check-image-size.sh` runs with `STRICT=1` — build fails if initramfs > 26MB.
 
-**VERIFIED_COMMIT auto-update**: On successful `master` builds (non-PR), CI extracts the OpenWrt commit SHA and updates `patches/VERIFIED_COMMIT`, committing and pushing back to `master`.
+**Source provenance**: `BUILD-INFO.txt` records the actual OpenWrt commit.
+CI no longer locks to or writes `VERIFIED_COMMIT`, and has read-only repository
+permissions. No bot commit to the protected default branch is needed.
 
 ### Release Process
 
@@ -517,7 +527,7 @@ cd openwrt-ax3000t
 ### Required Repository Settings
 
 1. **Actions permissions**: Settings → Actions → General → Allow all actions and reusable workflows
-2. **Workflow permissions**: Settings → Actions → General → Workflow permissions → "Read and write permissions" (for VERIFIED_COMMIT push, semantic-release tag/release)
+2. **Workflow permissions**: Build workflows need read-only contents access; release permissions are scoped separately in `release.yml`.
 3. **Branch protection** (recommended): Protect `master` → Require status checks → `ci.yml` build job
 
 ---

@@ -31,6 +31,10 @@ jobs:
         run: bash scripts/tests/test-nikki-build.sh
       - name: Check supported build entry points
         run: bash scripts/tests/test-build-entrypoints.sh
+      - name: Check latest-main refresh and failure safety
+        run: bash scripts/tests/test-upstream-main.sh
+      - name: Check stable and mainline patch compatibility
+        run: bash scripts/tests/test-patch-compatibility.sh
       - name: Check AN8855 target and NFC prerequisites
         run: bash scripts/tests/test-an8855.sh
       - name: Check Argon defaults and retained theme choices

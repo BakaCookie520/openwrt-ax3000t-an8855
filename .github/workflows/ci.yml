@@ -6,7 +6,7 @@ on:
   pull_request:
     branches: [master]
   schedule:
-    - cron: '0 2 1 * *'  # 02:00 UTC on the 1st of each month
+    - cron: '0 2 * * *'  # Follow upstream daily at 10:00 Asia/Shanghai
   workflow_dispatch: {}
 
 env:
@@ -22,12 +22,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 360
     permissions:
-      contents: write  # Required for VERIFIED_COMMIT auto-update push
+      contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Needed for semantic-release and VERIFIED_COMMIT update
+          fetch-depth: 1
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install dependencies
@@ -46,13 +46,8 @@ jobs:
           ccache --set compression=true
           echo "/usr/lib/ccache" >> $GITHUB_PATH
 
-      - name: Clone OpenWrt
-        run: |
-          if [ ! -d "$OPENWRT_DIR/.git" ]; then
-            git clone --depth 1 --branch "$BUILD_REF" --single-branch \
-              https://git.openwrt.org/openwrt/openwrt.git "$OPENWRT_DIR"
-          fi
-          cd "$OPENWRT_DIR"
+      - name: Checkout latest OpenWrt main
+        run: bash "${SCRIPT_DIR}/checkout-openwrt-main.sh" "$OPENWRT_DIR"
 
       - name: Restore OpenWrt download and compiler caches
         uses: actions/cache@v4
@@ -63,22 +58,6 @@ jobs:
           key: ${{ runner.os }}-openwrt-main-${{ hashFiles('scripts/generate-config-seed.sh') }}
           restore-keys: |
             ${{ runner.os }}-openwrt-main-
-
-      - name: Lock to VERIFIED_COMMIT
-        run: |
-          cd "$OPENWRT_DIR"
-          if [ -f "$REPO_PATCH_DIR/VERIFIED_COMMIT" ]; then
-            OPENWRT_COMMIT=$(grep -vE '^\s*(#|$)' "$REPO_PATCH_DIR/VERIFIED_COMMIT" | head -n1 | tr -d '[:space:]' || true)
-            if [ -n "$OPENWRT_COMMIT" ]; then
-              echo "Locking to VERIFIED_COMMIT: $OPENWRT_COMMIT"
-              git fetch --depth 1 origin "$OPENWRT_COMMIT" || { echo "Failed to fetch commit $OPENWRT_COMMIT"; exit 1; }
-              git checkout --force "$OPENWRT_COMMIT"
-            else
-              echo "⚠️ VERIFIED_COMMIT empty, following main latest (patches may drift)"
-            fi
-          else
-            echo "⚠️ VERIFIED_COMMIT file missing, following main latest"
-          fi
 
       - name: Apply an8855 patches
         run: |
@@ -92,13 +71,13 @@ jobs:
             echo "Applying patches (dry-run first)..."
             for p in "${REPO_PATCH_DIR}"/*.patch; do
               echo "  dry-run: $(basename "$p")"
-              if ! patch -p1 --forward --no-backup-if-mismatch --dry-run -i "$p"; then
-                echo "❌ Patch $(basename "$p") failed to apply - main has drifted"
+              if ! patch -p1 --fuzz=0 --forward --no-backup-if-mismatch --dry-run -i "$p"; then
+                echo "❌ Patch $(basename "$p") is incompatible with the selected source"
                 exit 1
               fi
             done
             for p in "${REPO_PATCH_DIR}"/*.patch; do
-              patch -p1 --forward --no-backup-if-mismatch -i "$p"
+              patch -p1 --fuzz=0 --forward --no-backup-if-mismatch -i "$p"
             done
             # Verify patch applied
             if ! grep -q "Device/xiaomi_mi-router-ax3000t-an8855" target/linux/mediatek/image/filogic.mk; then
@@ -250,8 +229,3 @@ jobs:
           name: firmware-master-${{ github.sha }}
           path: ${{ env.ARTIFACT_DIR }}/*
           retention-days: 90
-
-      - name: Update VERIFIED_COMMIT (master, non-PR, success only)
-        if: ${{ github.event_name != 'pull_request' && success() }}
-        run: |
-          bash "${SCRIPT_DIR}/update-verified-commit.sh" "${OPENWRT_DIR}" "${REPO_PATCH_DIR}"

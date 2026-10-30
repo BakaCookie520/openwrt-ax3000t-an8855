@@ -1,12 +1,6 @@
-# OpenWrt main 已验证 commit 基准
-#
-# 在改动这个文件前,请先在一台 Linux 上:
-#   1) git clone --depth 1 --branch main https://git.openwrt.org/openwrt/openwrt.git
-#   2) 应用 patches/ 下全部补丁(dry-run 全过、生效校验通过)
-#   3) bash setup.sh build 成功,且 check-image-size.sh 报告 initramfs FIT ≤ 26MB
-# 然后把该 commit 的完整 sha 写到下面第一行(并更新本文件头注释的验证信息)。
-#
-# 置空(仅保留注释)则 setup.sh 跟随 main 最新、不锁定,补丁可能漂移失效。
+# 历史 OpenWrt main 验证基准，仅供追溯，不再作为构建锁定或回退来源。
+# setup.sh 和 Actions 每次获取最新 main，再严格应用 AN8855 补丁并检查布局。
+# 每次构建实际使用的提交记录在产物 BUILD-INFO.txt 中。
 #
 # 上次验证:2026-08-15,产物 initramfs-kernel.bin(FIT)= 24.9MB(≤26MB),
 #   initramfs-factory.ubi=27MB / squashfs-sysupgrade.bin=28MB

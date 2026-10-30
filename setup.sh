@@ -54,31 +54,9 @@ export REPO_PATCH_DIR="$(cd "$(dirname "$0")" && pwd)/patches"
 # 本仓库 scripts/ 目录(构建后体积校验等)
 export SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)/scripts"
 
-# 锁定到一个已验证可编译的 main commit(防主线漂移导致补丁失效)。
-# 值由 patches/VERIFIED_COMMIT 提供;置空则跟随 main 最新(不推荐)。
-# 切换/更新:构建前把新 sha 写进 patches/VERIFIED_COMMIT 并在 dry-run 全过后再 build。
-if [ -f "$REPO_PATCH_DIR/VERIFIED_COMMIT" ]; then
-    # 取第一行非空、非 # 注释行作为 commit sha
-    OPENWRT_COMMIT="$(grep -vE '^\s*(#|$)' "$REPO_PATCH_DIR/VERIFIED_COMMIT" | head -n1 | tr -d '[:space:]' || true)"
-else
-    OPENWRT_COMMIT=""
-fi
-
 echo ""
-echo "=== 步骤 1: 克隆 OpenWrt (分支: $BRANCH) ==="
-if [ ! -d "$OPENWRT_DIR" ]; then
-    git clone --depth 1 --branch "$BRANCH" --single-branch \
-        https://git.openwrt.org/openwrt/openwrt.git "$OPENWRT_DIR"
-fi
-# VERIFIED_COMMIT 记录主线已验证提交；本地不再提供跳过锁定或补丁的分支入口。
-if [ -n "$OPENWRT_COMMIT" ]; then
-    echo "  锁定到已验证 commit: $OPENWRT_COMMIT"
-    git -C "$OPENWRT_DIR" fetch --depth 1 origin "$OPENWRT_COMMIT" \
-        || { echo "  无法获取 commit $OPENWRT_COMMIT,检查 patches/VERIFIED_COMMIT" >&2; exit 1; }
-    git -C "$OPENWRT_DIR" checkout --force "$OPENWRT_COMMIT"
-else
-    echo "  ⚠️ 未设置 OPENWRT_COMMIT(patches/VERIFIED_COMMIT 缺失),跟随 main 最新,补丁可能漂移失效。"
-fi
+echo "=== 步骤 1: 获取 OpenWrt 最新主线 (分支: $BRANCH) ==="
+bash "${SCRIPT_DIR}/checkout-openwrt-main.sh" "$OPENWRT_DIR"
 
 cd "$OPENWRT_DIR"
 
@@ -101,15 +79,14 @@ else
     # 避免编到一半才因补丁问题崩溃。
     for p in "${REPO_PATCH_DIR}"/*.patch; do
         echo "    dry-run: $(basename "$p")"
-        if ! patch -p1 --forward --no-backup-if-mismatch --dry-run -i "$p"; then
+        if ! patch -p1 --fuzz=0 --forward --no-backup-if-mismatch --dry-run -i "$p"; then
             echo "  ❌ 补丁 $(basename "$p") 无法应用:main 已漂移。" >&2
-            echo "     方案A: 把 main 锁定到 patches/VERIFIED_COMMIT 里的已验证 commit。" >&2
-            echo "     方案B: 手工修此补丁后重试。" >&2
+            echo "     请适配补丁并重新验证；不会回退旧提交或普通双分区目标。" >&2
             exit 1
         fi
     done
     for p in "${REPO_PATCH_DIR}"/*.patch; do
-        patch -p1 --forward --no-backup-if-mismatch -i "$p"
+        patch -p1 --fuzz=0 --forward --no-backup-if-mismatch -i "$p"
     done
     echo "  已应用 an8855 目标补丁"
     # 应用后显式校验关键符号确实出现,防止"看似成功实则没生效"。
