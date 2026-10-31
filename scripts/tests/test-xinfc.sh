@@ -80,6 +80,40 @@ cmp "$WORK/root/www/luci-static/resources/xinfc/wireless.js" "$PACKAGE/runtime/w
 cmp "$WORK/root/usr/sbin/xinfc-wsc" "$PACKAGE/files/usr/sbin/xinfc-wsc"
 cmp "$WORK/root/usr/libexec/rpcd/luci.xinfc" "$PACKAGE/files/usr/libexec/rpcd/luci.xinfc"
 
+# Exercise the shipped RPC guard without loading rpcd or touching real hardware.
+awk '/^prepare_backup\(\)/ { copy=1 } copy { print } copy && /^}/ { exit }' \
+    "$PACKAGE/files/usr/libexec/rpcd/luci.xinfc" |
+    sed "s|/etc/xinfc|$WORK/backend-state|g" > "$WORK/backup-guard"
+. "$WORK/backup-guard"
+(
+# Model the router's root UID without requiring sudo on the CI runner.
+stat() {
+    case "$*" in
+        "-c %u $WORK/backend-state") printf '%s\n' "${TEST_OWNER:-0}" ;;
+        "-c %u:%a $WORK/backend-state") printf '%s:%s\n' "${TEST_OWNER:-0}" "$(command stat -c %a "$WORK/backend-state")" ;;
+        *) command stat "$@" ;;
+    esac
+}
+prepare_backup
+[ "$(stat -c %u:%a "$WORK/backend-state")" = '0:700' ]
+printf 'unchanged first backup\n' > "$WORK/backend-state/nfc_ndef_backup.bin"
+cp "$WORK/backend-state/nfc_ndef_backup.bin" "$WORK/expected-backup"
+chmod 755 "$WORK/backend-state"
+prepare_backup
+[ "$(stat -c %u:%a "$WORK/backend-state")" = '0:700' ]
+cmp "$WORK/expected-backup" "$WORK/backend-state/nfc_ndef_backup.bin"
+chmod 755 "$WORK/backend-state"
+TEST_OWNER=65534
+if prepare_backup; then echo 'FAIL: backend accepted foreign-owned directory'; exit 1; fi
+[ "$(stat -c %u:%a "$WORK/backend-state")" = '65534:755' ]
+unset TEST_OWNER
+mv "$WORK/backend-state" "$WORK/backend-real"
+ln -s "$WORK/backend-real" "$WORK/backend-state"
+if prepare_backup; then echo 'FAIL: backend accepted backup-directory symlink'; exit 1; fi
+[ "$(stat -c %a "$WORK/backend-real")" = 755 ]
+echo 'ok: backend repairs root-owned 0755, preserves first backup, rejects foreign owner and symlink'
+)
+
 # Every lifecycle script must return before even attempting id/stat/service calls.
 mkdir -p "$WORK/tools"
 for command in id stat mkdir rm; do
@@ -99,19 +133,16 @@ grep -Eq 'Root required|AX3000T device tree not found' "$WORK/preinst.log"
 echo "ok: runtime preinstall retains the hardware checks"
 
 # Exercise first-boot storage initialization in a sandbox, never on /etc/xinfc.
-sed "s|/etc/xinfc|$WORK/state|g; s|0:700|$(id -u):700|g" \
+sed "s|/etc/xinfc|$WORK/state|g; s|0:700|$(id -u):700|g; s| = 0 ]| = $(id -u) ]|g" \
     "$PACKAGE/runtime/95-xinfc-state" > "$WORK/initialize"
 env -u IPKG_INSTROOT sh "$WORK/initialize"
 [ "$(stat -c %a "$WORK/state")" = 700 ]
 printf 'first NFC backup\n' > "$WORK/state/nfc_ndef_backup.bin"
 cp "$WORK/state/nfc_ndef_backup.bin" "$WORK/first-backup"
-env -u IPKG_INSTROOT sh "$WORK/initialize"
-cmp "$WORK/first-backup" "$WORK/state/nfc_ndef_backup.bin"
 chmod 755 "$WORK/state"
-if env -u IPKG_INSTROOT sh "$WORK/initialize"; then
-    echo "FAIL: insecure state directory accepted"; exit 1
-fi
-chmod 700 "$WORK/state"
+env -u IPKG_INSTROOT sh "$WORK/initialize"
+[ "$(stat -c %a "$WORK/state")" = 700 ]
+cmp "$WORK/first-backup" "$WORK/state/nfc_ndef_backup.bin"
 mv "$WORK/state" "$WORK/real-state"
 ln -s "$WORK/real-state" "$WORK/state"
 if env -u IPKG_INSTROOT sh "$WORK/initialize"; then
@@ -122,7 +153,7 @@ echo "ok: first boot creates private storage, preserves the first backup and rej
 
 # Optional native APK smoke test. The normal OpenWrt recipe handles both formats.
 if command -v apk >/dev/null; then
-    apk mkpkg --info name:luci-app-xinfc --info version:1.0.1-r3 \
+    apk mkpkg --info name:luci-app-xinfc --info version:1.0.1-r4 \
         --info arch:aarch64_cortex-a53 --files "$WORK/root" \
         --script "pre-install:$WORK/preinst" --script "post-install:$WORK/postinst" \
         --script "post-deinstall:$WORK/postrm" --output "$WORK/xinfc.apk"
@@ -134,7 +165,7 @@ fi
 if command -v ar >/dev/null; then
     mkdir "$WORK/ipk"
     printf '2.0\n' > "$WORK/ipk/debian-binary"
-    printf 'Package: luci-app-xinfc\nVersion: 1.0.1-r3\nArchitecture: aarch64_cortex-a53\n' > "$WORK/control"
+    printf 'Package: luci-app-xinfc\nVersion: 1.0.1-r4\nArchitecture: aarch64_cortex-a53\n' > "$WORK/control"
     tar -czf "$WORK/ipk/control.tar.gz" -C "$WORK" control preinst postinst postrm
     tar -czf "$WORK/ipk/data.tar.gz" -C "$WORK/root" .
     (cd "$WORK/ipk"; ar cr "$WORK/xinfc.ipk" debian-binary control.tar.gz data.tar.gz)

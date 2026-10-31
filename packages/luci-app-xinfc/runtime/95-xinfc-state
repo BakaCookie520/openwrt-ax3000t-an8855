@@ -6,4 +6,7 @@ if [ ! -e /etc/xinfc ] && [ ! -L /etc/xinfc ]; then
 	mkdir -m 700 /etc/xinfc || exit 1
 fi
 [ ! -L /etc/xinfc ] && [ -d /etc/xinfc ] &&
+	[ "$(stat -c '%u' /etc/xinfc)" = 0 ] &&
+	chmod 700 /etc/xinfc
+[ ! -L /etc/xinfc ] && [ -d /etc/xinfc ] &&
 	[ "$(stat -c '%u:%a' /etc/xinfc)" = '0:700' ]
