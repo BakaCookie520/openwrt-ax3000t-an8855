@@ -29,6 +29,16 @@ prepare_state() {
 	[ "$(stat -c '%u:%a' "$STATE")" = '0:700' ]
 }
 
+prepare_backup() {
+	if [ ! -e /etc/xinfc ] && [ ! -L /etc/xinfc ]; then
+		mkdir -m 700 /etc/xinfc || return 1
+	fi
+	[ ! -L /etc/xinfc ] && [ -d /etc/xinfc ] || return 1
+	[ "$(stat -c '%u' /etc/xinfc)" = 0 ] || return 1
+	chmod 700 /etc/xinfc
+	[ "$(stat -c '%u:%a' /etc/xinfc)" = '0:700' ]
+}
+
 lock_control() {
 	exec 9>"$STATE/control.lock"
 	flock -x 9
@@ -65,7 +75,7 @@ recover_job() {
 
 if [ "$1" = worker ]; then
 	exec 9>&-
-	prepare_state && [ -d "$STATE/job.lock" ] || exit 1
+	prepare_state && prepare_backup && [ -d "$STATE/job.lock" ] || exit 1
 	printf '%s\n' "$$" > "$STATE/pid"
 	trap 'set_phase error; rm -f "$STATE/pid"; rmdir "$STATE/job.lock" 2>/dev/null; exit 1' HUP INT TERM
 	# The writer independently repeats model validation and acquires flock.
@@ -134,6 +144,7 @@ get_status() {
 	fi
 	json_add_string backup_path "$BACKUP"
 	if prepare_state && lock_control; then
+		prepare_backup
 		json_add_boolean runtime_available 1
 		recover_job
 		local phase
@@ -202,6 +213,7 @@ write_request() {
 	allowed_encryption "$encryption" ||
 		{ reply_error 'Use WPA2 Personal (AES) or WPA2/WPA3 mixed mode.'; return; }
 	prepare_state || { reply_error 'Unsafe or unavailable runtime directory.'; return; }
+	prepare_backup || { reply_error 'Backup directory must be root-owned with mode 0700.'; return; }
 	lock_control || { reply_error 'Cannot lock the NFC task state.'; return; }
 	recover_job
 	mkdir "$STATE/job.lock" 2>/dev/null ||

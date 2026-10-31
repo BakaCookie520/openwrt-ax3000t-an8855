@@ -16,7 +16,7 @@ function harness(settings = {}) {
 		ap1: { '.type': 'wifi-iface', mode: 'ap', device: 'radio1', ssid: 'guest', key: 'other-secret', encryption: 'sae-mixed' }
 	};
 	const events = {}, storage = settings.storage || new Map();
-	const writes = [], notices = [], edits = [];
+	const writes = [], notices = [], edits = [], applyModes = [], actions = [];
 	let applied = 0, modal = null;
 	const context = {
 		console, Set, Date, Promise, JSON, Array,
@@ -36,7 +36,7 @@ function harness(settings = {}) {
 			changes: () => settings.changesFailure ? Promise.reject(new Error('offline')) : Promise.resolve({ wireless: edits })
 		},
 		ui: {
-			changes: { apply: function() { applied++; } },
+			changes: { apply: function(checked) { applied++; applyModes.push(checked); actions.push('apply'); } },
 			addNotification: (title, element, type) => notices.push({ element, type }),
 			showModal: (title, body) => { modal = { title, body }; },
 			hideModal: () => { modal = null; }
@@ -46,6 +46,7 @@ function harness(settings = {}) {
 			if (spec.method === 'status') return settings.statusFailure ? Promise.reject(new Error('offline')) :
 				Promise.resolve({ ok: true, supported: true, writer_available: true });
 			writes.push(args);
+			actions.push('write');
 			if (settings.writeFailure) return Promise.reject(new Error('offline'));
 			return Promise.resolve({ ok: !settings.writeRejected });
 		} }
@@ -83,7 +84,7 @@ function harness(settings = {}) {
 		events[name]();
 		for (let i = 0; i < 4; i++) await Promise.resolve();
 	}
-	return { data, edits, writes, notices, storage, open, save, event,
+	return { data, edits, writes, notices, storage, open, save, event, applyModes, actions,
 		apply: () => context.ui.changes.apply(true),
 		get applied() { return applied; }, get modal() { return modal; } };
 }
@@ -102,20 +103,19 @@ async function tests() {
 	assert(![...h.storage.values()].join('').includes('home'));
 	await h.apply();
 	assert.equal(h.applied, 1);
-	assert.equal(h.writes.length, 0, 'Apply request is not yet confirmation');
-	await h.event('uci-applied');
-	assert.deepEqual(Array.from(h.writes[0]), ['ap0', '', '', '']);
-	await h.event('uci-applied');
-	assert.equal(h.writes.length, 1, 'Duplicate confirmation cannot repeat hardware write');
+	assert.deepEqual(Array.from(h.writes[0]), ['', 'home', 'new-secret-123', 'psk2']);
+	assert.deepEqual(h.applyModes, [false], 'NFC wireless sync must not start a checked-apply rollback');
+	assert.deepEqual(h.actions, ['write', 'apply']);
+	await h.apply();
+	assert.equal(h.writes.length, 1, 'A consumed instruction cannot repeat NFC writes');
 	assert.equal(h.storage.size, 0);
-	console.log('ok: default checked; no write on open/save; one section-only RPC after confirmed apply');
+	console.log('ok: default checked; no write on open/save; current credentials are submitted before unchecked apply');
 
 	for (const selected of ['0', '1']) {
 		h = harness();
 		await h.save('ap0', { key: 'updated-secret' }, selected);
 		if (selected === '1') await h.event('uci-reverted');
 		await h.apply();
-		await h.event('uci-applied');
 		assert.equal(h.writes.length, 0, 'Unchecked/reverted intent must not write');
 	}
 	h = harness();
@@ -123,7 +123,6 @@ async function tests() {
 	item.section.rejectSave = true;
 	await assert.rejects(item.section.map.save());
 	await h.apply();
-	await h.event('uci-applied');
 	assert.equal(h.writes.length, 0);
 	console.log('ok: unchecked, reverted, cancelled, failed-save and unconfirmed apply cannot write');
 
@@ -132,7 +131,6 @@ async function tests() {
 		h.data.ap0[field] = { mode: 'sta', disabled: '1', encryption: 'sae', ppsk: '1' }[field];
 		await h.save('ap0', { key: 'updated-secret' });
 		await h.apply();
-		await h.event('uci-applied');
 		assert.equal(h.writes.length, 0);
 	}
 	for (const settings of [{ readonly: true }, { access: false }, { statusFailure: true }]) {
@@ -143,46 +141,43 @@ async function tests() {
 	h = harness();
 	await h.save('ap0', { channel: '36' });
 	await h.apply();
-	await h.event('uci-applied');
 	assert.equal(h.writes.length, 0);
 	console.log('ok: only credential edits on eligible APs with NFC write permission are considered');
 
 	h = harness();
 	await h.save('ap0', { key: 'updated-secret' });
 	await h.save('ap1', { ssid: 'different-network' });
-	const applying = h.apply();
-	await Promise.resolve();
-	await Promise.resolve();
-	assert(h.modal, 'Different radio credentials require explicit target selection');
-	assert.equal(h.applied, 0);
-	const select = h.modal.body[1];
-	select.value = 'ap1';
-	h.modal.body[2].children[2].attrs.click();
-	await applying;
-	await h.event('uci-applied');
-	assert.equal(h.writes[0][0], 'ap1');
+	await h.apply();
+	assert.equal(h.writes[0][0], '');
+	assert.equal(h.writes[0][1], 'different-network');
+	assert.equal(h.writes[0][2], 'other-secret');
 	assert.equal(h.writes.length, 1);
-	console.log('ok: multiple different networks require choosing one NFC target, not last-writer-wins');
+	console.log('ok: latest edited network is selected without a multi-network prompt');
+
+	h = harness();
+	await h.save('ap1', { key: '5ghz-password' });
+	await h.apply();
+	assert.equal(h.writes[0][1], 'guest');
+	assert.equal(h.writes[0][2], '5ghz-password');
+	h = harness();
+	await h.save('ap0', { key: '2ghz-password' });
+	await h.apply();
+	assert.equal(h.writes[0][1], 'home');
+	assert.equal(h.writes[0][2], '2ghz-password');
+	console.log('ok: changing only one band never submits the other band credentials');
 
 	h = harness();
 	await h.save('ap0', { key: 'updated-secret' });
 	await h.save('ap1', { ssid: 'different-network' });
-	const cancelled = h.apply();
-	await Promise.resolve();
-	await Promise.resolve();
-	h.modal.body[2].children[0].attrs.click();
-	await cancelled;
-	await h.event('uci-applied');
-	assert.equal(h.applied, 0);
-	assert.equal(h.writes.length, 0);
+	await h.apply();
+	assert.equal(h.writes[0][2], 'other-secret');
 	h = harness();
 	await h.save('ap0', { key: 'same-password' });
 	await h.save('ap1', { ssid: 'home', key: 'same-password', encryption: 'psk2' });
 	await h.apply();
-	assert.equal(h.modal, null);
-	await h.event('uci-applied');
+	assert.equal(h.writes[0][2], 'same-password');
 	assert.equal(h.writes.length, 1);
-	console.log('ok: cancelled multi-target apply writes nothing; identical dual-band credentials write once');
+	console.log('ok: latest edited network wins; identical dual-band credentials still write once');
 
 	h = harness();
 	await h.save('ap0', { key: 'updated-secret' });
@@ -190,15 +185,23 @@ async function tests() {
 	restored.data.ap0.key = 'updated-secret';
 	restored.edits.push(['set', 'ap0', 'key', 'updated-secret']);
 	await restored.apply();
-	await restored.event('uci-applied');
 	assert.equal(restored.writes.length, 1);
+	h = harness();
+	await h.save('ap0', { key: 'first-passphrase' });
+	await h.save('ap1', { key: 'second-passphrase' });
+	await h.save('ap0', { key: 'last-passphrase' });
+	restored = harness({ storage: h.storage });
+	restored.data.ap0.key = 'last-passphrase';
+	restored.data.ap1.key = 'second-passphrase';
+	restored.edits.push(['set', 'ap0', 'key', 'last-passphrase'], ['set', 'ap1', 'key', 'second-passphrase']);
+	await restored.apply();
+	assert.equal(restored.writes[0][2], 'last-passphrase', 'Reload must preserve last-edit order');
 	h = harness();
 	await h.save('ap0', { key: 'updated-secret' });
 	for (const settings of [{ session: 'another-login' }, { changesFailure: true }]) {
 		restored = harness({ storage: new Map(h.storage), ...settings });
 		restored.edits.push(['set', 'ap0', 'key', 'updated-secret']);
 		await restored.apply();
-		await restored.event('uci-applied');
 		assert.equal(restored.writes.length, 0);
 	}
 	const expired = new Map(h.storage);
@@ -209,7 +212,6 @@ async function tests() {
 	restored = harness({ storage: expired });
 	restored.edits.push(['set', 'ap0', 'key', 'updated-secret']);
 	await restored.apply();
-	await restored.event('uci-applied');
 	assert.equal(restored.writes.length, 0);
 	console.log('ok: saved intent survives same-login reload; different login, expiry or failed change check cannot write');
 
@@ -217,12 +219,11 @@ async function tests() {
 		h = harness(settings);
 		await h.save('ap0', { ssid: 'updated-network' });
 		await h.apply();
-		await h.event('uci-applied');
 		assert.equal(h.applied, 1);
+		assert.deepEqual(h.applyModes, [false]);
 		assert.equal(h.writes.length, 1);
 		assert.equal(h.storage.size, 0);
 		assert(h.notices.some(notice => notice.type === 'warning'));
-		await h.event('uci-applied');
 		assert.equal(h.writes.length, 1);
 	}
 	console.log('ok: NFC failure leaves Wi-Fi applied, reports uncertainty and never retries writes automatically');

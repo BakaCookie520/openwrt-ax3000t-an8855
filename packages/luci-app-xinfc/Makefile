@@ -4,7 +4,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-xinfc
 PKG_VERSION:=1.0.1
-PKG_RELEASE:=3
+PKG_RELEASE:=4
 PKG_LICENSE:=GPL-2.0-or-later
 PKG_FLAGS:=nonshared
 
@@ -81,6 +81,8 @@ for dependency in flock jshn ubus stat mktemp; do
 done
 if [ -e /etc/xinfc ] || [ -L /etc/xinfc ]; then
 	[ ! -L /etc/xinfc ] && [ -d /etc/xinfc ] &&
+		[ "$$(stat -c '%u' /etc/xinfc)" = 0 ] &&
+		chmod 700 /etc/xinfc &&
 		[ "$$(stat -c '%u:%a' /etc/xinfc)" = '0:700' ] ||
 		fail 'Existing /etc/xinfc must be a root-owned directory with mode 0700.'
 fi

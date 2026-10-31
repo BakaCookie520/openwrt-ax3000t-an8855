@@ -90,18 +90,20 @@ runtime write that would override a retained theme choice.
 
 The xinfc original APK and its six-file payload are in `packages/luci-app-xinfc/`.
 `SHA256SUMS` verifies the archive and unchanged payload before packaging; the
-writer is static ARM64 and must not be stripped. Version 1.0.1-r3 retains offline install
+writer is static ARM64 and must not be stripped. Version 1.0.1-r4 retains offline install
 hooks for offline assembly and uses OpenWrt's native APK/IPK package machinery.
 Original scripts and metadata are retained in `source/original.adbdump`.
 No first-boot hook programs NFC. Resolve GPL corresponding-source availability
 before publicly redistributing the supplied binary.
 
 The full profile reversibly patches LuCI's wireless modal to load
-`xinfc/wireless.js` and offer a default-checked NFC sync flag. Only confirmed
-Save & Apply submits the existing section-only write RPC; Save alone never
-does. Recovery removes the source hook and excludes the module. Unknown source
-anchors fail closed. See ADR 0004 for permissions, multiple radios, session
-intent lifetime, lost responses and hardware-testing limitations. Run
+`xinfc/wireless.js` and offer a default-checked NFC sync flag. Save & Apply
+submits the current interface's credentials to the existing NFC RPC before an
+unchecked wireless apply, avoiding the 90-second rollback when a password
+change disconnects LuCI. Save alone never does. If both bands are edited, the
+latest edited interface wins. Recovery removes the source hook and excludes
+the module. Unknown source anchors fail closed. See ADR 0004 for permissions,
+session intent lifetime, lost responses and hardware-testing limitations. Run
 `node scripts/tests/test-wireless-nfc.js` alongside the Bash contracts.
 
 Run the repository baseline and all offline contracts:
