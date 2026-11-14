@@ -394,6 +394,17 @@ class PublicationTests(WorkspaceTest):
         with self.assertRaises(ValueError):
             publisher.validate_artifacts(directory, self.api, {**self.api.runs[10], "run_attempt": 2}, "v25.12.6")
 
+    def test_legacy_unversioned_image_names_use_verified_source_not_filename_version(self):
+        directory = self.legacy_artifacts()
+        for path in list(directory.glob("*.bin")) + list(directory.glob("*.ubi")):
+            path.rename(path.with_name(path.name.replace("-25.12.6-", "-")))
+        self.checksums(directory)
+        value, _ = publisher.validate_artifacts(directory, self.api, self.api.runs[10], "v25.12.6")
+        self.assertEqual(value["upstream_ref"], "v25.12.6")
+        self.assertEqual(value["upstream_commit"], COMMIT)
+        with self.assertRaises(ValueError):
+            publisher.validate_artifacts(directory, self.api, self.api.runs[10], "v25.12.7")
+
     def test_legacy_publication_and_publication_only_retry(self):
         directory = self.legacy_artifacts()
         for staging, expected in (("first", "published"), ("retry", "unchanged")):

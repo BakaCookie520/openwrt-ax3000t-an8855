@@ -236,9 +236,10 @@ gh workflow run release.yml -f run_id=<successful-stable-build-run-id>
 This also verifies the default branch, actual stable build job and complete
 artifacts. Expired artifacts require a fresh build. For unexpired legacy stable
 artifacts from a successful first attempt, explicitly add `-f legacy_version=v25.12.6`
-to migrate without compiling. Migration checks original checksums, image names,
+to migrate without compiling. Migration checks original checksums, board identity,
 package repository versions and the upstream tag's source SHA before adding
-provenance only to the staged release files. Automatic runs never use this path.
+provenance only to the staged release files. Optional versioned image filenames
+are not used as version evidence. Automatic runs never use this path.
 `build.log` is omitted from Releases; checksums cover the published files.
 
 ## Constraints

@@ -37,14 +37,12 @@ def managed(name):
     )
 
 
-def legacy_metadata(files, api, run, version, images):
+def legacy_metadata(files, api, run, version):
     """Reconstruct provenance only from verified old artifacts and trusted APIs."""
     version_key(version)
     if run["run_attempt"] != 1 or "BUILD-METADATA.json" in files:
         raise ValueError("Legacy migration requires first-attempt artifacts without metadata")
-    expected_prefixes = (f"full-openwrt-{version[1:]}-", f"recovery-openwrt-{version[1:]}-")
-    if any(not name.startswith(expected_prefixes) for name in images):
-        raise ValueError("Legacy firmware filenames disagree with the requested stable version")
+    # CONFIG_VERSION_FILENAMES is optional; source SHA, not naming, proves version.
     for name in ("full.config", "recovery.config"):
         repos = re.findall(
             r'^CONFIG_VERSION_REPO="([^"]+)"$',
@@ -125,7 +123,7 @@ def validate_artifacts(directory, api, run, legacy_version=""):
         ):
             raise ValueError("Firmware configuration selects the wrong board")
     if legacy_version:
-        value = legacy_metadata(files, api, run, legacy_version, full + recovery + fits)
+        value = legacy_metadata(files, api, run, legacy_version)
     else:
         value = validate_metadata(json.loads(files["BUILD-METADATA.json"].read_text(encoding="utf-8")))
     if value["channel"] != "stable":

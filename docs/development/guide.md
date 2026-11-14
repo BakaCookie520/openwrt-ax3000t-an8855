@@ -553,11 +553,12 @@ the default branch. To publish existing legacy firmware without rebuilding, add
 `-f legacy_version=v25.12.6`. This manual-only path accepts only a successful
 first attempt with its unique `firmware-stable-latest-<repository SHA>` artifact.
 It validates original checksums and normal board/ABI/size checks, then requires
-filenames and package repository versions to agree with the requested version,
+package repository versions to agree with the requested version,
 and `BUILD-INFO.txt`'s source SHA to equal the upstream tag's commit.
 Only the release staging copy gains `BUILD-METADATA.json`; it includes
 `provenance: verified-legacy-artifact` and `original_checksums_sha256`.
 The original Actions archive is never modified.
+Versioned filenames are optional in OpenWrt and are not version evidence.
 
 The baseline workflow can be manually dispatched to validate publication-only
 changes without compiling firmware. When specifically avoiding builds during a
