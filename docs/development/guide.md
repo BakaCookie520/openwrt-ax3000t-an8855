@@ -460,25 +460,40 @@ yaml-lint .agents/config.yaml .opencode/skill-config.yaml
 
 ### Overview
 
-This project uses GitHub Actions for continuous integration and semantic-release for automated versioning.
+This project uses GitHub Actions for upstream-gated builds and upstream-versioned
+stable Releases. Commit conventions no longer determine firmware versions.
 
 ### Workflows
 
 | Workflow | File | Triggers | Purpose |
 |----------|------|----------|---------|
-| **CI Build** | `.github/workflows/ci.yml` | Daily 02:00 UTC, push/PR to `master`, manual dispatch | Build latest patched mainline, validate image size, upload firmware/APK artifacts |
-| **Stable Build** | `.github/workflows/stable-latest.yml` | Monthly cron (02:00 UTC), manual dispatch | Resolve the latest stable OpenWrt release and build validated full/recovery firmware |
-| **Release** | `.github/workflows/release.yml` | Push to `master` (after CI passes) | semantic-release: analyze commits → version → tag → GitHub Release with artifacts |
+| **CI Build** | `.github/workflows/ci.yml` | `17 */6 * * *`, push/PR to `master`, manual dispatch | Check mainline changes; build and validate when needed |
+| **Stable Build** | `.github/workflows/stable-latest.yml` | `37 */6 * * *`, manual dispatch | Check latest formal stable version; build and validate when needed |
+| **Release** | `.github/workflows/release.yml` | Successful stable workflow, or manual retry with run ID | Verify the actual build and publish upstream-named stable firmware only |
 
 ### CI Build Details
 
-**Mainline build**: Latest OpenWrt `main` + AN8855 patches, fetched once per run.
-The repository branch remains `master`; the single build no longer uses a matrix.
+Preflight resolves the upstream SHA once; CI checks out precisely that commit,
+including when upstream advances before compilation. Local setup still follows
+latest `main` by default; `OPENWRT_EXPECTED_COMMIT` is an internal CI pin, not a
+new user-facing branch override. Stable resolution pages through formal GitHub
+Releases, compares numeric versions and peels annotated tags on the canonical
+OpenWrt remote.
+
+Only scheduled runs can skip. A small cache record identifies the channel,
+upstream ref/SHA and successful default-branch run/attempt. Its actual build job
+must have succeeded, not merely the overall workflow. The record is saved in a
+separate job after build validation, artifact upload and build-job cleanup.
+PRs never save trusted records. Missing, invalid, evicted or deleted history
+permits a conservative rebuild; API failures fail closed. Push/PR and manual
+builds remain unconditional. Feed-only changes require manual dispatch.
 
 The `stable-latest` build is intentionally outside the PR/push matrix so a
 slow full release build cannot delay normal pull-request feedback. Both
 workflows use GitHub Actions cache for the OpenWrt `dl/` download directory and
 the ccache directory.
+Default-branch builds serialize per channel without canceling active builds;
+PRs have separate concurrency groups.
 
 **Artifacts** (90-day retention):
 - `*-initramfs-factory.ubi` — Flash via recovery/mtd
@@ -488,46 +503,75 @@ the ccache directory.
 **Image size gate**: `scripts/check-image-size.sh` runs with `STRICT=1` — build fails if initramfs > 26MB.
 
 **Source provenance**: `BUILD-INFO.txt` records the actual OpenWrt commit.
+Actions also includes `BUILD-METADATA.json` (schema version 1): `repository`,
+`channel`, `upstream_ref`, `upstream_commit`, `repository_commit`, `run_id`,
+`run_attempt` and `run_number`. Container names are
+`firmware-<main|stable>-<run_id>-<run_attempt>`, preventing same-commit reruns
+from selecting each other's artifacts. Metadata is included in checksums.
 CI no longer locks to or writes `VERIFIED_COMMIT`, and has read-only repository
 permissions. No bot commit to the protected default branch is needed.
 
 ### Release Process
 
-1. Push conventional commits to `master` (e.g., `feat: add new kmod`, `fix: patch drift`)
-2. CI builds and validates → passes
-3. `release.yml` triggers `semantic-release`
-4. semantic-release:
-   - Analyzes commits since last tag
-   - Determines version bump (major/minor/patch)
-   - Generates changelog (updates `CHANGELOG.md`)
-   - Creates git tag `vX.Y.Z`
-   - Creates GitHub Release with firmware + APK artifacts
-   - Commits `CHANGELOG.md` update
+1. A scheduled upstream change, or a manual dispatch, starts a stable build.
+2. Full/recovery validation and artifact upload succeed.
+3. Release verifies the successful default-branch stable run, actual build job,
+   run/attempt-bound artifact, metadata, complete inventory and checksums.
+4. It creates/updates a draft Release named for the upstream tag (`v25.12.6`),
+   uploads only approved deliverables, verifies remote asset sizes/digests,
+   then makes the Release public. Failures leave a draft for retry.
 
-**Commit conventions** (enforced by semantic-release):
-- `feat:` → minor version
-- `fix:` `perf:` `refactor:` `docs:` `build:` → patch version
-- `chore:` `ci:` `style:` `test:` → no release
-- `BREAKING CHANGE:` footer → major version
+Snapshot, PR, canceled, failed and skipped builds cannot publish. The build token
+remains read-only; the publisher has only `actions: read` and `contents: write`.
+No workflow executes scripts from downloaded artifacts.
+
+Same-version rebuilds replace managed attachments on the same Release. Tags
+retain their initial repository commit; the notes and metadata link the actual
+rebuild commit. Older runs/attempts cannot overwrite newer builds; identical
+already-published attempts with matching assets are no-ops. Only the highest
+published formal stable version is Latest. Other manually added attachments are
+preserved. Release checksums cover exactly its managed files, excluding
+`build.log`; source artifact checksums are verified before staging.
+
+Historical `v1.x` tags/releases and `CHANGELOG.md` are preserved. There is no
+semantic-release configuration, commit-driven version bump or bot changelog
+commit. See [ADR 0005](../adr/0005-upstream-gated-builds-and-stable-releases.md).
 
 ### Manual Release (if needed)
 
 ```bash
-# Dry-run to preview
-npx semantic-release --dry-run --no-ci
+# Force a new stable build, including when upstream has not changed.
+gh workflow run stable-latest.yml --ref master
 
-# Force release (bypasses commit analysis)
-npx semantic-release --no-ci --branch master
+# Retry publication only, using an existing successful stable build.
+gh workflow run release.yml --ref master -f run_id=<successful-stable-build-run-id>
 ```
+
+Manual publication passes the same gates and cannot bypass compilation safety.
+Expired artifacts require a fresh stable build. Run manual release retries from
+the default branch. To publish existing legacy firmware without rebuilding, add
+`-f legacy_version=v25.12.6`. This manual-only path accepts only a successful
+first attempt with its unique `firmware-stable-latest-<repository SHA>` artifact.
+It validates original checksums and normal board/ABI/size checks, then requires
+filenames and package repository versions to agree with the requested version,
+and `BUILD-INFO.txt`'s source SHA to equal the upstream tag's commit.
+Only the release staging copy gains `BUILD-METADATA.json`; it includes
+`provenance: verified-legacy-artifact` and `original_checksums_sha256`.
+The original Actions archive is never modified.
+
+The baseline workflow can be manually dispatched to validate publication-only
+changes without compiling firmware. When specifically avoiding builds during a
+release repair, use `[skip ci]` on the change and merge commits, then dispatch
+only `repository-baseline.yml` and `release.yml`.
 
 ### Local CI Testing
 
 ```bash
 # Validate workflow syntax
-actionlint .github/workflows/
+actionlint
 
-# Test semantic-release config
-npx semantic-release --dry-run --no-ci
+# Offline polling and publication regression tests (standard library only).
+python3 -m unittest discover -s scripts/tests -p 'test_ci_release.py' -v
 
 # Run image size check locally
 cd openwrt-ax3000t

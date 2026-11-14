@@ -2,6 +2,7 @@
 openwrt-ax3000t/
 openwrt-build-*
 openwrt_compile_database/
+.build-state/
 
 # 忽略日志
 build.log

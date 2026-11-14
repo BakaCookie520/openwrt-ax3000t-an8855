@@ -85,12 +85,27 @@ if bash "$CHECK" "$WORK/not-a-checkout" > "$WORK/error" 2>&1; then
 fi
 echo "ok: failed fetch or invalid checkout cannot fall back to old sources"
 
+# A CI preflight SHA remains fixed even if main advances before checkout.
+PATH="$WORK/tools:$PATH" OPENWRT_EXPECTED_COMMIT="$old" bash "$CHECK" "$WORK/pinned-main"
+[ "$(git -C "$WORK/pinned-main" rev-parse HEAD)" = "$old" ]
+PATH="$WORK/tools:$PATH" bash "$ROOT/scripts/checkout-openwrt-ref.sh" \
+    "$WORK/pinned-stable" v25.12.6 "$new"
+[ "$(git -C "$WORK/pinned-stable" rev-parse HEAD)" = "$new" ]
+echo dirty > "$WORK/pinned-main/source"
+if PATH="$WORK/tools:$PATH" OPENWRT_EXPECTED_COMMIT="$new" bash "$CHECK" "$WORK/pinned-main"; then
+    echo "FAIL: pinned checkout discarded tracked edits"; exit 1
+fi
+if OPENWRT_EXPECTED_COMMIT=not-a-sha bash "$CHECK" "$WORK/invalid-sha"; then
+    echo "FAIL: invalid CI SHA accepted"; exit 1
+fi
+echo "ok: main and stable CI use the preflight SHA and preserve dirty checkouts"
+
 CI="$ROOT/.github/workflows/ci.yml"
-grep -qF "cron: '0 2 * * *'" "$CI"
+grep -qF "cron: '17 */6 * * *'" "$CI"
 grep -qF 'checkout-openwrt-main.sh' "$CI"
 grep -qF 'checkout-openwrt-main.sh' "$ROOT/setup.sh"
 if grep -qE 'VERIFIED_COMMIT|update-verified-commit|checkout --force' "$CI" "$ROOT/setup.sh" "$CHECK"; then
     echo "FAIL: latest-main entry point contains an old pin or forced checkout"; exit 1
 fi
 grep -q "OpenWrt commit:.*git -C.*rev-parse HEAD" "$ROOT/scripts/build-firmware.sh"
-echo "ok: local and daily CI share latest-main checkout; build metadata records the actual revision"
+echo "ok: local latest-main and pinned CI share safe entry points; metadata records the actual revision"

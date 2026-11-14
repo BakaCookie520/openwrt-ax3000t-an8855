@@ -6,8 +6,16 @@ on:
   pull_request:
     branches: [master]
   schedule:
-    - cron: '0 2 * * *'  # Follow upstream daily at 10:00 Asia/Shanghai
+    - cron: '17 */6 * * *'  # Lightweight upstream check, not an unconditional build
   workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: openwrt-main-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'default' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   OPENWRT_DIR: ${{ github.workspace }}/openwrt-ax3000t
@@ -17,12 +25,48 @@ env:
   CCACHE_DIR: ${{ github.workspace }}/.ccache
 
 jobs:
+  preflight:
+    name: Check upstream main
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      source_ref: ${{ steps.source.outputs.source_ref }}
+      upstream_commit: ${{ steps.source.outputs.upstream_commit }}
+      should_build: ${{ steps.decision.outputs.should_build }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Resolve upstream once
+        id: source
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/ci-build-state.py resolve --channel main
+      - name: Restore successful-build record
+        if: github.event_name == 'schedule'
+        uses: actions/cache/restore@v6
+        with:
+          path: .build-state
+          key: upstream-success-main-${{ steps.source.outputs.upstream_commit }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: upstream-success-main-${{ steps.source.outputs.upstream_commit }}-
+      - name: Decide whether a real build is needed
+        id: decision
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_REF: ${{ steps.source.outputs.source_ref }}
+          SOURCE_COMMIT: ${{ steps.source.outputs.upstream_commit }}
+        run: python3 scripts/ci-build-state.py check --channel main --ref "$SOURCE_REF" --commit "$SOURCE_COMMIT"
+
   build:
     name: Build (mainline AN8855)
+    needs: preflight
+    if: needs.preflight.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 360
     permissions:
       contents: read
+    env:
+      OPENWRT_EXPECTED_COMMIT: ${{ needs.preflight.outputs.upstream_commit }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -223,9 +267,39 @@ jobs:
           bash "${SCRIPT_DIR}/build-firmware.sh" "$OPENWRT_DIR"
           echo "ARTIFACT_DIR=$OPENWRT_DIR/bin/ax3000t-artifacts" >> "$GITHUB_ENV"
 
+      - name: Record verified build provenance
+        run: >-
+          python3 scripts/ci-build-state.py metadata --channel main --ref main
+          --commit "$OPENWRT_EXPECTED_COMMIT" --tree "$OPENWRT_DIR"
+          --artifacts "$ARTIFACT_DIR"
+
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: firmware-master-${{ github.sha }}
+          name: firmware-main-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.ARTIFACT_DIR }}/*
+          if-no-files-found: error
           retention-days: 90
+
+  record-success:
+    name: Remember successful main build
+    needs: [preflight, build]
+    if: >-
+      needs.build.result == 'success' &&
+      github.event_name != 'pull_request' &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Create successful-build record
+        env:
+          SOURCE_COMMIT: ${{ needs.preflight.outputs.upstream_commit }}
+        run: python3 scripts/ci-build-state.py record --channel main --ref main --commit "$SOURCE_COMMIT"
+      - uses: actions/cache/save@v6
+        with:
+          path: .build-state
+          key: upstream-success-main-${{ needs.preflight.outputs.upstream_commit }}-${{ github.run_id }}-${{ github.run_attempt }}

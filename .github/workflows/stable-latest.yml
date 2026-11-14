@@ -2,8 +2,16 @@ name: Stable OpenWrt Build - AX3000T-AN8855
 
 on:
   schedule:
-    - cron: '0 2 1 * *'  # 02:00 UTC on the 1st of each month
+    - cron: '37 */6 * * *'  # Lightweight upstream check, offset from mainline
   workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: openwrt-stable
+  cancel-in-progress: false
 
 env:
   OPENWRT_DIR: ${{ github.workspace }}/openwrt-ax3000t
@@ -12,51 +20,57 @@ env:
   CCACHE_DIR: ${{ github.workspace }}/.ccache
 
 jobs:
+  preflight:
+    name: Check upstream stable
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      source_ref: ${{ steps.source.outputs.source_ref }}
+      upstream_commit: ${{ steps.source.outputs.upstream_commit }}
+      version: ${{ steps.source.outputs.version }}
+      should_build: ${{ steps.decision.outputs.should_build }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Resolve latest formal release and its commit once
+        id: source
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/ci-build-state.py resolve --channel stable
+      - name: Restore successful-build record
+        if: github.event_name == 'schedule'
+        uses: actions/cache/restore@v6
+        with:
+          path: .build-state
+          key: upstream-success-stable-${{ steps.source.outputs.upstream_commit }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: upstream-success-stable-${{ steps.source.outputs.upstream_commit }}-
+      - name: Decide whether a real build is needed
+        id: decision
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_REF: ${{ steps.source.outputs.source_ref }}
+          SOURCE_COMMIT: ${{ steps.source.outputs.upstream_commit }}
+        run: python3 scripts/ci-build-state.py check --channel stable --ref "$SOURCE_REF" --commit "$SOURCE_COMMIT"
+
   build:
     name: Build (stable-latest)
+    needs: preflight
+    if: needs.preflight.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 360
     permissions:
       contents: read
+    env:
+      BUILD_REF: ${{ needs.preflight.outputs.source_ref }}
+      OPENWRT_EXPECTED_COMMIT: ${{ needs.preflight.outputs.upstream_commit }}
+      OPENWRT_VERSION_REPO: https://mirrors.ustc.edu.cn/openwrt/releases/${{ needs.preflight.outputs.version }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
           token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Resolve latest stable OpenWrt release
-        id: resolve-stable
-        run: |
-          set -euo pipefail
-          latest_tag="$(
-            curl --fail --silent --show-error --retry 3 \
-              -H 'Accept: application/vnd.github+json' \
-              'https://api.github.com/repos/openwrt/openwrt/releases?per_page=100' |
-              jq -r '
-                map(select(
-                  .draft == false and
-                  .prerelease == false and
-                  (.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))
-                ))
-                | max_by(
-                    .tag_name
-                    | capture("^v(?<major>[0-9]+)\\.(?<minor>[0-9]+)\\.(?<patch>[0-9]+)$")
-                    | [.major, .minor, .patch]
-                    | map(tonumber)
-                  )
-                | .tag_name
-              '
-          )"
-          if [ -z "$latest_tag" ] || [ "$latest_tag" = "null" ]; then
-            echo "❌ Failed to resolve the latest stable OpenWrt release"
-            exit 1
-          fi
-          version="${latest_tag#v}"
-          echo "BUILD_REF=$latest_tag" >> "$GITHUB_ENV"
-          echo "OPENWRT_VERSION_REPO=https://mirrors.ustc.edu.cn/openwrt/releases/$version" >> "$GITHUB_ENV"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "Resolved latest stable OpenWrt release: $latest_tag"
 
       - name: Install dependencies
         run: |
@@ -75,12 +89,7 @@ jobs:
           echo "/usr/lib/ccache" >> $GITHUB_PATH
 
       - name: Clone OpenWrt
-        run: |
-          if [ ! -d "$OPENWRT_DIR/.git" ]; then
-            git clone --depth 1 --branch "$BUILD_REF" --single-branch \
-              https://git.openwrt.org/openwrt/openwrt.git "$OPENWRT_DIR"
-          fi
-          cd "$OPENWRT_DIR"
+        run: bash scripts/checkout-openwrt-ref.sh "$OPENWRT_DIR" "$BUILD_REF" "$OPENWRT_EXPECTED_COMMIT"
 
       - name: Restore OpenWrt download and compiler caches
         uses: actions/cache@v4
@@ -88,7 +97,7 @@ jobs:
           path: |
             ${{ env.CCACHE_DIR }}
             ${{ env.OPENWRT_DIR }}/dl
-          key: ${{ runner.os }}-openwrt-stable-latest-${{ steps.resolve-stable.outputs.version }}-${{ hashFiles('scripts/generate-config-seed.sh') }}
+          key: ${{ runner.os }}-openwrt-stable-latest-${{ needs.preflight.outputs.version }}-${{ hashFiles('scripts/generate-config-seed.sh') }}
           restore-keys: |
             ${{ runner.os }}-openwrt-stable-latest-
 
@@ -256,9 +265,39 @@ jobs:
           bash "${SCRIPT_DIR}/build-firmware.sh" "$OPENWRT_DIR"
           echo "ARTIFACT_DIR=$OPENWRT_DIR/bin/ax3000t-artifacts" >> "$GITHUB_ENV"
 
+      - name: Record verified build provenance
+        run: >-
+          python3 scripts/ci-build-state.py metadata --channel stable --ref "$BUILD_REF"
+          --commit "$OPENWRT_EXPECTED_COMMIT" --tree "$OPENWRT_DIR"
+          --artifacts "$ARTIFACT_DIR"
+
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: firmware-stable-latest-${{ github.sha }}
+          name: firmware-stable-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.ARTIFACT_DIR }}/*
+          if-no-files-found: error
           retention-days: 90
+
+  record-success:
+    name: Remember successful stable build
+    needs: [preflight, build]
+    if: >-
+      needs.build.result == 'success' &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Create successful-build record
+        env:
+          SOURCE_REF: ${{ needs.preflight.outputs.source_ref }}
+          SOURCE_COMMIT: ${{ needs.preflight.outputs.upstream_commit }}
+        run: python3 scripts/ci-build-state.py record --channel stable --ref "$SOURCE_REF" --commit "$SOURCE_COMMIT"
+      - uses: actions/cache/save@v6
+        with:
+          path: .build-state
+          key: upstream-success-stable-${{ needs.preflight.outputs.upstream_commit }}-${{ github.run_id }}-${{ github.run_attempt }}

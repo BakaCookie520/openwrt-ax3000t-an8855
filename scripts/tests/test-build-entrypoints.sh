@@ -27,7 +27,7 @@ CI="$ROOT/.github/workflows/ci.yml"
 ! grep -Eq 'openwrt-24\.10|matrix\.|strategy:' "$CI"
 [ "$(grep -cF 'branches: [master]' "$CI")" = 2 ]
 grep -qx '  BUILD_REF: main' "$CI"
-grep -qF 'name: firmware-master-${{ github.sha }}' "$CI"
+grep -qF 'name: firmware-main-${{ github.run_id }}-${{ github.run_attempt }}' "$CI"
 for workflow in ci stable-latest; do
     grep -q 'Apply an8855 patches' "$ROOT/.github/workflows/$workflow.yml"
     grep -q 'check-an8855.py' "$ROOT/.github/workflows/$workflow.yml"
