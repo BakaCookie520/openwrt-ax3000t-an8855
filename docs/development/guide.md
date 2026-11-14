@@ -548,8 +548,21 @@ gh workflow run release.yml --ref master -f run_id=<successful-stable-build-run-
 ```
 
 Manual publication passes the same gates and cannot bypass compilation safety.
-Expired artifacts or legacy artifacts without provenance require a fresh stable
-build. Run manual release retries from the default branch.
+Expired artifacts require a fresh stable build. Run manual release retries from
+the default branch. To publish existing legacy firmware without rebuilding, add
+`-f legacy_version=v25.12.6`. This manual-only path accepts only a successful
+first attempt with its unique `firmware-stable-latest-<repository SHA>` artifact.
+It validates original checksums and normal board/ABI/size checks, then requires
+filenames and package repository versions to agree with the requested version,
+and `BUILD-INFO.txt`'s source SHA to equal the upstream tag's commit.
+Only the release staging copy gains `BUILD-METADATA.json`; it includes
+`provenance: verified-legacy-artifact` and `original_checksums_sha256`.
+The original Actions archive is never modified.
+
+The baseline workflow can be manually dispatched to validate publication-only
+changes without compiling firmware. When specifically avoiding builds during a
+release repair, use `[skip ci]` on the change and merge commits, then dispatch
+only `repository-baseline.yml` and `release.yml`.
 
 ### Local CI Testing
 

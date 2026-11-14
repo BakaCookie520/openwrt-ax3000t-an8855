@@ -11,6 +11,11 @@ on:
         description: Successful default-branch stable build run ID (retry publication only)
         required: true
         type: string
+      legacy_version:
+        description: Optional pre-metadata stable artifact migration tag (for example v25.12.6)
+        required: false
+        default: ''
+        type: string
 
 permissions:
   actions: read
@@ -32,6 +37,7 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       BUILD_RUN_ID: ${{ github.event.workflow_run.id || inputs.run_id }}
+      LEGACY_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.legacy_version || '' }}
     steps:
       - name: Checkout trusted release implementation
         uses: actions/checkout@v4
@@ -41,7 +47,7 @@ jobs:
 
       - name: Validate stable build origin and actual build job
         id: candidate
-        run: python3 scripts/ci-build-state.py release-gate --run-id "$BUILD_RUN_ID"
+        run: python3 scripts/ci-build-state.py release-gate --run-id "$BUILD_RUN_ID" --legacy-version "$LEGACY_VERSION"
 
       - name: Download only this successful build attempt
         if: steps.candidate.outputs.eligible == 'true'
@@ -58,3 +64,4 @@ jobs:
           python3 scripts/publish-stable-release.py --run-id "$BUILD_RUN_ID"
           --artifacts "$RUNNER_TEMP/stable-release-input"
           --staging "$RUNNER_TEMP/stable-release-staged"
+          --legacy-version "$LEGACY_VERSION"

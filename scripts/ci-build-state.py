@@ -64,11 +64,20 @@ def should_build(api, channel, source_ref, commit, state, event):
         raise
 
 
-def release_candidate(api, run_id):
+def release_candidate(api, run_id, legacy_version=""):
+    if legacy_version:
+        version_key(legacy_version)
+        if os.environ.get("GITHUB_EVENT_NAME") != "workflow_dispatch":
+            raise ValueError("Legacy migration is only permitted by explicit manual dispatch")
     run = successful_run(api, "stable", run_id, allow_skipped=True)
     if run is None:
         return None
     name = artifact_name("stable", run["id"], run["run_attempt"])
+    if legacy_version:
+        # Old names were not attempt-bound. A rerun cannot be safely disambiguated.
+        if run["run_attempt"] != 1:
+            raise ValueError("Cannot migrate an ambiguous legacy rerun")
+        name = f"firmware-stable-latest-{run['head_sha']}"
     artifacts = [
         item for item in api.pages(
             f"{api.base}/actions/runs/{run['id']}/artifacts", "artifacts"
@@ -89,10 +98,11 @@ def main():
     parser.add_argument("--tree")
     parser.add_argument("--artifacts")
     parser.add_argument("--run-id", type=int)
+    parser.add_argument("--legacy-version", default="")
     args = parser.parse_args()
     api = GitHub(os.environ["GITHUB_REPOSITORY"])
     if args.operation == "release-gate":
-        candidate = release_candidate(api, args.run_id)
+        candidate = release_candidate(api, args.run_id, args.legacy_version)
         if candidate is None:
             output(eligible=False)
         else:

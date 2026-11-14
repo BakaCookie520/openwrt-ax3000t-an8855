@@ -87,6 +87,8 @@ class FakeGitHub(GitHub):
 
     def request(self, path, method="GET", data=None, binary=False):
         self.calls.append((method, path, copy.deepcopy(data)))
+        if path == "repos/openwrt/openwrt/commits/v25.12.6":
+            return {"sha": COMMIT}
         if path == self.base:
             return {"default_branch": "master"}
         if "/actions/runs/" in path:
@@ -304,6 +306,24 @@ class BuildStateTests(WorkspaceTest):
 
 
 class ReleaseGateTests(WorkspaceTest):
+    def test_legacy_artifact_requires_explicit_manual_migration(self):
+        self.api.run_artifacts[10] = [{
+            "name": f"firmware-stable-latest-{REPO_COMMIT}", "expired": False,
+        }]
+        with self.assertRaises(ValueError):
+            state.release_candidate(self.api, 10)
+        with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "workflow_dispatch"}):
+            run, name = state.release_candidate(self.api, 10, "v25.12.6")
+        self.assertEqual(run["id"], 10)
+        self.assertEqual(name, f"firmware-stable-latest-{REPO_COMMIT}")
+        with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "workflow_run"}):
+            with self.assertRaises(ValueError):
+                state.release_candidate(self.api, 10, "v25.12.6")
+        self.api.runs[10]["run_attempt"] = 2
+        with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "workflow_dispatch"}):
+            with self.assertRaises(ValueError):
+                state.release_candidate(self.api, 10, "v25.12.6")
+
     def test_skipped_build_is_noop_but_missing_artifacts_is_failure(self):
         self.assertIsNotNone(state.release_candidate(self.api, 10))
         self.api.jobs[10][0]["conclusion"] = "skipped"
@@ -335,6 +355,63 @@ class ReleaseGateTests(WorkspaceTest):
 
 
 class PublicationTests(WorkspaceTest):
+    def legacy_artifacts(self):
+        directory = self.artifacts()
+        (directory / "BUILD-METADATA.json").unlink()
+        for path in list(directory.glob("*-openwrt-*.bin")) + list(directory.glob("*-openwrt-*.ubi")):
+            path.rename(path.with_name(path.name.replace("-openwrt-", "-openwrt-25.12.6-")))
+        for name in ("full.config", "recovery.config"):
+            with (directory / name).open("a", encoding="utf-8") as stream:
+                stream.write('CONFIG_VERSION_REPO="https://mirrors.ustc.edu.cn/openwrt/releases/25.12.6"\n')
+        self.checksums(directory)
+        return directory
+
+    def test_legacy_provenance_is_derived_only_after_original_checksum_verification(self):
+        directory = self.legacy_artifacts()
+        original_manifest = (directory / "SHA256SUMS.txt").read_bytes()
+        with patch.object(self.api, "request", return_value={"sha": COMMIT}) as request:
+            value, files = publisher.validate_artifacts(directory, self.api, self.api.runs[10], "v25.12.6")
+        request.assert_called_once_with("repos/openwrt/openwrt/commits/v25.12.6")
+        self.assertEqual(value["upstream_commit"], COMMIT)
+        self.assertEqual(value["provenance"], "verified-legacy-artifact")
+        self.assertEqual(value["original_checksums_sha256"], hashlib.sha256(original_manifest).hexdigest())
+        self.assertFalse((directory / "BUILD-METADATA.json").exists())
+        self.assertEqual((directory / "SHA256SUMS.txt").read_bytes(), original_manifest)
+        staged = publisher.stage_assets(files, self.directory / "staged-legacy", value)
+        self.assertIn("BUILD-METADATA.json", [path.name for path in staged])
+        (directory / "packages.tar.gz").write_bytes(b"tampered")
+        with patch.object(self.api, "request") as request, self.assertRaises(ValueError):
+            publisher.validate_artifacts(directory, self.api, self.api.runs[10], "v25.12.6")
+        request.assert_not_called()
+
+    def test_legacy_wrong_version_source_or_retried_run_is_rejected(self):
+        directory = self.legacy_artifacts()
+        with patch.object(self.api, "request", return_value={"sha": "c" * 40}):
+            with self.assertRaises(ValueError):
+                publisher.validate_artifacts(directory, self.api, self.api.runs[10], "v25.12.6")
+        with self.assertRaises(ValueError):
+            publisher.validate_artifacts(directory, self.api, self.api.runs[10], "v25.12.7")
+        with self.assertRaises(ValueError):
+            publisher.validate_artifacts(directory, self.api, {**self.api.runs[10], "run_attempt": 2}, "v25.12.6")
+
+    def test_legacy_publication_and_publication_only_retry(self):
+        directory = self.legacy_artifacts()
+        for staging, expected in (("first", "published"), ("retry", "unchanged")):
+            self.assertEqual(publisher.publish(
+                self.api, 10, directory, self.directory / staging, "v25.12.6"
+            ), expected)
+        self.assertFalse(self.api.releases[0]["draft"])
+        self.assertFalse((directory / "BUILD-METADATA.json").exists())
+
+    def test_verify_only_never_mutates_github(self):
+        directory = self.legacy_artifacts()
+        self.assertEqual(publisher.publish(
+            self.api, 10, directory, self.directory / "verify", "v25.12.6", verify_only=True
+        ), "verified")
+        self.assertFalse(any(method != "GET" for method, _, _ in self.api.calls))
+        self.assertFalse(self.api.releases)
+        self.assertFalse(self.api.tags)
+
     def test_wrong_board_or_oversized_image_never_creates_release(self):
         directory = self.artifacts()
         (directory / "full.config").write_text("CONFIG_TARGET_stock=y\n", encoding="utf-8")

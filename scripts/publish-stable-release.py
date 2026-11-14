@@ -12,7 +12,7 @@ import shutil
 
 from github_actions import (
     GitHub, VERSION, digest, match_run, output, successful_run,
-    validate_metadata, version_key,
+    validate_metadata, version_key, write_json,
 )
 
 
@@ -37,13 +37,48 @@ def managed(name):
     )
 
 
-def validate_artifacts(directory, api, run):
+def legacy_metadata(files, api, run, version, images):
+    """Reconstruct provenance only from verified old artifacts and trusted APIs."""
+    version_key(version)
+    if run["run_attempt"] != 1 or "BUILD-METADATA.json" in files:
+        raise ValueError("Legacy migration requires first-attempt artifacts without metadata")
+    expected_prefixes = (f"full-openwrt-{version[1:]}-", f"recovery-openwrt-{version[1:]}-")
+    if any(not name.startswith(expected_prefixes) for name in images):
+        raise ValueError("Legacy firmware filenames disagree with the requested stable version")
+    for name in ("full.config", "recovery.config"):
+        repos = re.findall(
+            r'^CONFIG_VERSION_REPO="([^"]+)"$',
+            files[name].read_text(encoding="utf-8"), re.MULTILINE,
+        )
+        if len(repos) != 1 or not repos[0].endswith(f"/releases/{version[1:]}"):
+            raise ValueError("Legacy package repository disagrees with the stable version")
+    commits = re.findall(
+        r"^OpenWrt commit: ([0-9a-f]{40})$",
+        files["BUILD-INFO.txt"].read_text(encoding="utf-8"), re.MULTILINE,
+    )
+    if len(commits) != 1:
+        raise ValueError("Missing unique legacy OpenWrt source commit")
+    upstream = api.request(f"repos/openwrt/openwrt/commits/{version}")
+    if upstream["sha"] != commits[0]:
+        raise ValueError("Legacy source commit does not match the formal upstream tag")
+    return validate_metadata({
+        "schema_version": 1, "repository": api.repository, "channel": "stable",
+        "upstream_ref": version, "upstream_commit": commits[0],
+        "repository_commit": run["head_sha"], "run_id": run["id"],
+        "run_attempt": run["run_attempt"], "run_number": run["run_number"],
+        "provenance": "verified-legacy-artifact",
+        "original_checksums_sha256": digest(files["SHA256SUMS.txt"]),
+    })
+
+
+def validate_artifacts(directory, api, run, legacy_version=""):
     directory = Path(directory)
     entries = list(directory.iterdir())
     if any(not item.is_file() or item.is_symlink() for item in entries):
         raise ValueError("Firmware artifacts must be regular flat files")
     files = {item.name: item for item in entries}
-    if not REQUIRED | {"SHA256SUMS.txt"} <= files.keys():
+    required = REQUIRED - {"BUILD-METADATA.json"} if legacy_version else REQUIRED
+    if not required | {"SHA256SUMS.txt"} <= files.keys():
         raise ValueError("Required firmware deliverables are missing")
     checksums = {}
     for line in files["SHA256SUMS.txt"].read_text(encoding="utf-8").splitlines():
@@ -55,7 +90,7 @@ def validate_artifacts(directory, api, run):
         raise ValueError("Artifact files do not exactly match SHA256SUMS.txt")
     if any(digest(files[name]) != checksum for name, checksum in checksums.items()):
         raise ValueError("Firmware artifact checksum mismatch")
-    if not REQUIRED <= files.keys() or any(files[name].stat().st_size == 0 for name in REQUIRED):
+    if any(files[name].stat().st_size == 0 for name in required):
         raise ValueError("Required firmware deliverables are missing or empty")
     if any(not managed(name) and name != "build.log" for name in files):
         raise ValueError("Unexpected firmware artifact")
@@ -89,7 +124,10 @@ def validate_artifacts(directory, api, run):
             files[name].read_text(encoding="utf-8").splitlines()
         ):
             raise ValueError("Firmware configuration selects the wrong board")
-    value = validate_metadata(json.loads(files["BUILD-METADATA.json"].read_text(encoding="utf-8")))
+    if legacy_version:
+        value = legacy_metadata(files, api, run, legacy_version, full + recovery + fits)
+    else:
+        value = validate_metadata(json.loads(files["BUILD-METADATA.json"].read_text(encoding="utf-8")))
     if value["channel"] != "stable":
         raise ValueError("Snapshot firmware cannot be released")
     match_run(value, api, run)
@@ -100,7 +138,7 @@ def validate_artifacts(directory, api, run):
     return value, {name: path for name, path in files.items() if managed(name)}
 
 
-def stage_assets(files, destination):
+def stage_assets(files, destination, value=None):
     destination = Path(destination)
     if destination.exists():
         raise ValueError("Release staging directory must not already exist")
@@ -108,6 +146,10 @@ def stage_assets(files, destination):
     for name, path in files.items():
         if name != "SHA256SUMS.txt":
             shutil.copyfile(path, destination / name)
+    if "BUILD-METADATA.json" not in files:
+        if value is None or value.get("provenance") != "verified-legacy-artifact":
+            raise ValueError("Missing verified legacy provenance")
+        write_json(destination / "BUILD-METADATA.json", value)
     paths = sorted(destination.iterdir())
     (destination / "SHA256SUMS.txt").write_text(
         "".join(f"{digest(path)}  {path.name}\n" for path in paths), encoding="utf-8"
@@ -157,10 +199,13 @@ def release_body(value):
     )
 
 
-def publish(api, run_id, directory, staging):
+def publish(api, run_id, directory, staging, legacy_version="", verify_only=False):
     run = successful_run(api, "stable", run_id)
-    value, files = validate_artifacts(directory, api, run)
-    paths = stage_assets(files, staging)
+    value, files = validate_artifacts(directory, api, run, legacy_version)
+    paths = stage_assets(files, staging, value)
+    if verify_only:
+        print(f"Verified {len(paths)} stable release assets without modifying GitHub")
+        return "verified"
     tag = value["upstream_ref"]
     releases = list(api.pages(f"{api.base}/releases"))
     matches = [release for release in releases if release["tag_name"] == tag]
@@ -229,9 +274,12 @@ def main():
     parser.add_argument("--run-id", type=int, required=True)
     parser.add_argument("--artifacts", required=True)
     parser.add_argument("--staging", required=True)
+    parser.add_argument("--legacy-version", default="")
+    parser.add_argument("--verify-only", action="store_true")
     args = parser.parse_args()
     result = publish(
-        GitHub(os.environ["GITHUB_REPOSITORY"]), args.run_id, args.artifacts, args.staging
+        GitHub(os.environ["GITHUB_REPOSITORY"]), args.run_id, args.artifacts, args.staging,
+        args.legacy_version, args.verify_only,
     )
     output(result=result)
 
