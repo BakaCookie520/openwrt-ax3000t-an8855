@@ -62,6 +62,11 @@ firmware rather than initiating another build.
 The migration's first publication-only test rejected optional unversioned
 filenames. Version proof uses the upstream tag's source SHA and package repository
 configuration instead; a regression test covers unversioned filenames.
+Read-only inspection of successful run 41290332504 confirmed unversioned images,
+`# CONFIG_VERSIONOPT is not set` in both configurations, and source
+`64900e756efa667774214f9c6b17c113222e01f7`, exactly matching upstream `v25.12.6`.
+The migration accepts explicit upstream-default version configuration, but still
+rejects conflicting custom options and mismatched source commits.
 
 Same-version download contents deliberately change, and updates temporarily hide
 the Release as draft. Consumers must verify the current checksum manifest and

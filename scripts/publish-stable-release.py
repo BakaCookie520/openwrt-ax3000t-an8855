@@ -44,12 +44,22 @@ def legacy_metadata(files, api, run, version):
         raise ValueError("Legacy migration requires first-attempt artifacts without metadata")
     # CONFIG_VERSION_FILENAMES is optional; source SHA, not naming, proves version.
     for name in ("full.config", "recovery.config"):
+        config = files[name].read_text(encoding="utf-8")
+        # The verified old build uses upstream defaults, not custom version options.
+        # Require the explicit Kconfig disabled marker, never infer this from absence.
+        if "# CONFIG_VERSIONOPT is not set" in config.splitlines():
+            if re.search(r"^CONFIG_VERSION\w*=", config, re.MULTILINE):
+                raise ValueError("Contradictory legacy version configuration")
+            continue
         repos = re.findall(
             r'^CONFIG_VERSION_REPO="([^"]+)"$',
-            files[name].read_text(encoding="utf-8"), re.MULTILINE,
+            config, re.MULTILINE,
         )
         if len(repos) != 1 or not repos[0].endswith(f"/releases/{version[1:]}"):
             raise ValueError("Legacy package repository disagrees with the stable version")
+        numbers = re.findall(r'^CONFIG_VERSION_NUMBER="([^"]*)"$', config, re.MULTILINE)
+        if len(numbers) > 1 or (numbers and numbers[0] not in ("", version[1:])):
+            raise ValueError("Legacy custom version disagrees with the stable version")
     commits = re.findall(
         r"^OpenWrt commit: ([0-9a-f]{40})$",
         files["BUILD-INFO.txt"].read_text(encoding="utf-8"), re.MULTILINE,

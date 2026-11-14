@@ -389,6 +389,11 @@ class PublicationTests(WorkspaceTest):
         with patch.object(self.api, "request", return_value={"sha": "c" * 40}):
             with self.assertRaises(ValueError):
                 publisher.validate_artifacts(directory, self.api, self.api.runs[10], "v25.12.6")
+        with (directory / "full.config").open("a", encoding="utf-8") as stream:
+            stream.write('CONFIG_VERSION_NUMBER="99.0.0"\n')
+        self.checksums(directory)
+        with self.assertRaises(ValueError):
+            publisher.validate_artifacts(directory, self.api, self.api.runs[10], "v25.12.6")
         with self.assertRaises(ValueError):
             publisher.validate_artifacts(directory, self.api, self.api.runs[10], "v25.12.7")
         with self.assertRaises(ValueError):
@@ -404,6 +409,22 @@ class PublicationTests(WorkspaceTest):
         self.assertEqual(value["upstream_commit"], COMMIT)
         with self.assertRaises(ValueError):
             publisher.validate_artifacts(directory, self.api, self.api.runs[10], "v25.12.7")
+
+    def test_real_legacy_shape_inherits_upstream_version_defaults(self):
+        directory = self.legacy_artifacts()
+        for path in list(directory.glob("*.bin")) + list(directory.glob("*.ubi")):
+            path.rename(path.with_name(path.name.replace("-25.12.6-", "-")))
+        for name in ("full.config", "recovery.config"):
+            (directory / name).write_text(
+                "CONFIG_TARGET_mediatek_filogic_DEVICE_xiaomi_mi-router-ax3000t-an8855=y\n"
+                "# CONFIG_VERSIONOPT is not set\n", encoding="utf-8",
+            )
+        self.checksums(directory)
+        value, _ = publisher.validate_artifacts(directory, self.api, self.api.runs[10], "v25.12.6")
+        self.assertEqual(value["upstream_commit"], COMMIT)
+        with patch.object(self.api, "request", return_value={"sha": "c" * 40}):
+            with self.assertRaises(ValueError):
+                publisher.validate_artifacts(directory, self.api, self.api.runs[10], "v25.12.6")
 
     def test_legacy_publication_and_publication_only_retry(self):
         directory = self.legacy_artifacts()
