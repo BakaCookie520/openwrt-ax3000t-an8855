@@ -49,7 +49,7 @@ Success records and 90-day firmware artifacts are not permanent archives.
 Expired artifacts require rebuilding; publication failures can otherwise be
 retried without compiling. A manual-only `legacy_version` migration accepts
 unexpired pre-metadata stable artifacts from successful first attempts, after
-verifying original checksums, board/ABI/size, image filenames, package repository
+verifying original checksums, board/ABI/size, package repository
 version and the upstream tag's commit. Reconstructed provenance is explicitly
 marked and added only to the staged release, retaining the original checksum
 manifest's digest. Automatic publication never falls back to legacy artifacts.
@@ -59,6 +59,9 @@ reachable version, then failed creating the already-existing `v1.0.0` tag.
 The replacement was still in unmerged PR #7, so this was not a failure of the
 new publisher. Migration permits testing the replacement with existing stable
 firmware rather than initiating another build.
+The migration's first publication-only test rejected optional unversioned
+filenames. Version proof uses the upstream tag's source SHA and package repository
+configuration instead; a regression test covers unversioned filenames.
 
 Same-version download contents deliberately change, and updates temporarily hide
 the Release as draft. Consumers must verify the current checksum manifest and
