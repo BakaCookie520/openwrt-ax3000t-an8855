@@ -16,6 +16,30 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  inspect-legacy:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: firmware-stable-latest-7ec9b23a8df16603c7cf35dcdddb36014d5d97f9
+          run-id: 41290332504
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: legacy
+      - name: Inspect verified legacy version evidence
+        run: |
+          cd legacy
+          sha256sum --check SHA256SUMS.txt >/dev/null
+          printf '[DEBUG-legacy-evidence] files\n'
+          ls -1
+          printf '[DEBUG-legacy-evidence] source\n'
+          cat BUILD-INFO.txt
+          printf '[DEBUG-legacy-evidence] configuration\n'
+          grep -E 'CONFIG_VERSION|CONFIG_TARGET_mediatek_filogic_DEVICE' full.config recovery.config
+
   repository-baseline:
     runs-on: ubuntu-latest
     steps:
