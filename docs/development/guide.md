@@ -559,6 +559,9 @@ Only the release staging copy gains `BUILD-METADATA.json`; it includes
 `provenance: verified-legacy-artifact` and `original_checksums_sha256`.
 The original Actions archive is never modified.
 Versioned filenames are optional in OpenWrt and are not version evidence.
+Legacy configurations explicitly disabling `CONFIG_VERSIONOPT` inherit the
+verified upstream source defaults. Custom version options, when present, must
+agree with the requested stable release; contradictory configurations fail.
 
 The baseline workflow can be manually dispatched to validate publication-only
 changes without compiling firmware. When specifically avoiding builds during a
