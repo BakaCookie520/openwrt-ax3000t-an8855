@@ -1,88 +1,60 @@
-name: Release - semantic-release
+name: Release - Stable OpenWrt
 
 on:
   workflow_run:
-    workflows: [CI - Build OpenWrt AX3000T-AN8855]
+    workflows: [Stable OpenWrt Build - AX3000T-AN8855]
     types: [completed]
     branches: [master]
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Successful default-branch stable build run ID (retry publication only)
+        required: true
+        type: string
 
 permissions:
   actions: read
   contents: write
-  issues: write
-  pull-requests: write
+
+concurrency:
+  group: stable-release
+  cancel-in-progress: false
 
 jobs:
   release:
-    name: semantic-release
+    name: Publish verified stable firmware
+    if: >-
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+      (github.event_name == 'workflow_dispatch' ||
+       github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      BUILD_RUN_ID: ${{ github.event.workflow_run.id || inputs.run_id }}
     steps:
-      - name: Select source revision
-        id: source
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          WORKFLOW_SHA: ${{ github.event.workflow_run.head_sha }}
-          CURRENT_SHA: ${{ github.sha }}
-        run: |
-          if [ "$EVENT_NAME" = "workflow_run" ]; then
-            echo "sha=$WORKFLOW_SHA" >> "$GITHUB_OUTPUT"
-          else
-            echo "sha=$CURRENT_SHA" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Checkout source revision
+      - name: Checkout trusted release implementation
         uses: actions/checkout@v4
         with:
-          ref: ${{ steps.source.outputs.sha }}
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
 
-      - name: Put source revision on master
-        if: github.event_name == 'workflow_run'
-        run: git checkout -B master "${{ steps.source.outputs.sha }}"
+      - name: Validate stable build origin and actual build job
+        id: candidate
+        run: python3 scripts/ci-build-state.py release-gate --run-id "$BUILD_RUN_ID"
 
-      - name: Download validated firmware artifacts
-        if: github.event_name == 'workflow_run'
-        uses: actions/download-artifact@v4
+      - name: Download only this successful build attempt
+        if: steps.candidate.outputs.eligible == 'true'
+        uses: actions/download-artifact@v8
         with:
-          name: firmware-master-${{ github.event.workflow_run.head_sha }}
-          path: release-assets
+          name: ${{ steps.candidate.outputs.artifact_name }}
+          path: ${{ runner.temp }}/stable-release-input
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ steps.candidate.outputs.run_id }}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: '20'
-          registry-url: 'https://registry.npmjs.org'
-
-      - name: Install semantic-release
-        run: |
-          npm install -g semantic-release @semantic-release/changelog \
-            @semantic-release/git conventional-changelog-conventionalcommits
-
-      - name: Configure git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-      - name: Run semantic-release (dry-run)
-        if: github.event_name == 'workflow_dispatch'
-        run: npx semantic-release --dry-run --no-ci
-
-      - name: Run semantic-release
-        if: github.event_name == 'workflow_run'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx semantic-release
-
-      - name: Verify release
-        if: github.event_name == 'workflow_run'
-        run: |
-          latest_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo none)
-          echo "Latest tag: $latest_tag"
+      - name: Verify, stage and publish the upstream-named Release
+        if: steps.candidate.outputs.eligible == 'true'
+        run: >-
+          python3 scripts/publish-stable-release.py --run-id "$BUILD_RUN_ID"
+          --artifacts "$RUNNER_TEMP/stable-release-input"
+          --staging "$RUNNER_TEMP/stable-release-staged"

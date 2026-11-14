@@ -3,6 +3,10 @@
 set -euo pipefail
 
 TREE="${1:?Usage: $0 <openwrt-dir>}"
+if [ -n "${OPENWRT_EXPECTED_COMMIT:-}" ]; then
+    exec bash "$(dirname "$0")/checkout-openwrt-ref.sh" \
+        "$TREE" main "$OPENWRT_EXPECTED_COMMIT"
+fi
 if [ ! -e "$TREE" ]; then
     git clone --depth 1 --branch main --single-branch \
         https://git.openwrt.org/openwrt/openwrt.git "$TREE"

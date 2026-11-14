@@ -67,9 +67,14 @@ GitHub Actions builds only the patched mainline snapshot. The stable
 variant runs in a separate workflow, is resolved dynamically, and is therefore
 not pinned to a specific release tag.
 
-Mainline Actions runs daily at 02:00 UTC (10:00 Asia/Shanghai; scheduling can be
-delayed), as well as on push/PR and manual dispatch. Each build uses the source
-revision resolved at startup, never a moving checkout during compilation.
+Mainline and stable Actions check upstream every six hours at UTC minute 17 and
+37 respectively (execution can be delayed). Scheduled checks compile only when
+the upstream revision/release changes or no verified successful-build record is
+available. Missing/evicted cache records or deleted runs can conservatively cause
+a rebuild. Upstream lookup failures stop the run rather than reuse stale sources.
+Push/PR still build mainline; manual dispatch always forces a build for either
+channel. Feed-only updates, including Nikki, require a manual build.
+Each build uses the exact source SHA resolved during preflight, never a moving checkout.
 `patches/VERIFIED_COMMIT` is historical only, not a pin or fallback. The actual
 source SHA is recorded in `BUILD-INFO.txt`. Patches allow line offsets but no
 fuzz; incompatible context or failed single-UBI/upgrade/NFC gates stops the build.
@@ -208,9 +213,29 @@ artifacts. The separate `stable-latest.yml` workflow performs the same build
 for the latest stable OpenWrt release. Both workflows cache OpenWrt downloads
 and compiler results; artifacts are retained by GitHub Actions for 90 days.
 
-After a successful `master` firmware build, semantic-release determines the
-version from conventional commits, generates the changelog, creates a tag, and
-publishes a GitHub Release with the validated firmware/APK assets.
+Only a successful, actual stable firmware build on the default branch can publish
+a GitHub Release. Snapshots remain Actions artifacts; a successful check with a
+skipped build cannot publish. Versions follow upstream tags, such as `v25.12.6`,
+not commit-message version bumps; automation no longer commits `CHANGELOG.md`.
+
+A successful manual rebuild of the same version replaces managed attachments on
+the same Release. Downloads can change: verify its checksums and
+`BUILD-METADATA.json` (channel, upstream ref/SHA, repository SHA, run ID/attempt).
+The Release stays draft during replacement and becomes public only after every
+asset is verified. Failed publication leaves a retryable draft. Existing tags keep
+their first-build repository commit; actual rebuild provenance is in the release
+notes and metadata. Older runs cannot overwrite newer builds; only the highest
+stable version is marked Latest. Historical `v1.x` releases remain unchanged.
+
+Retry publication without recompiling:
+
+```sh
+gh workflow run release.yml -f run_id=<successful-stable-build-run-id>
+```
+
+This also verifies the default branch, actual stable build job and complete
+artifacts. Legacy or expired artifacts require a fresh stable build. `build.log`
+is omitted from Releases; release checksums cover precisely the published files.
 
 ## Constraints
 
